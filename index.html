@@ -3,463 +3,620 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>3D Samurai Game</title>
+  <title>Samurai Quest 3D</title>
   <style>
-    * {
+    :root {
+      --bg: rgba(15, 18, 22, 0.68);
+      --panel: rgba(12, 15, 18, 0.65);
+      --text: #f5efe5;
+      --gold: #f9cf7a;
+      --danger: #ff6b6b;
+      --good: #6ee7a6;
+      --border: rgba(255,255,255,0.18);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
       margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-    body {
       width: 100%;
-      height: 100vh;
-      background: #000;
-      font-family: Arial, sans-serif;
+      height: 100%;
       overflow: hidden;
+      background: #05070b;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--text);
     }
+
     canvas {
       display: block;
       width: 100%;
       height: 100%;
     }
-    #ui {
+
+    #hud {
       position: fixed;
-      top: 20px;
-      left: 20px;
+      top: 18px;
+      left: 18px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      min-width: 180px;
+      z-index: 10;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+    }
+
+    .line {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 4px 0;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+    }
+
+    .line .label { color: #d7d1c8; }
+    .line .value { color: var(--gold); font-weight: 700; }
+
+    #status {
+      position: fixed;
+      left: 50%;
+      top: 18px;
+      transform: translateX(-50%);
+      background: rgba(20, 23, 28, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
       color: #fff;
-      background: rgba(0, 0, 0, 0.7);
-      padding: 20px;
-      border-radius: 8px;
-      font-size: 16px;
-      z-index: 100;
-      line-height: 1.8;
+      z-index: 10;
     }
-    #ui div {
-      margin: 5px 0;
-    }
+
     #crosshair {
       position: fixed;
       top: 50%;
       left: 50%;
+      width: 24px;
+      height: 24px;
       transform: translate(-50%, -50%);
-      width: 30px;
-      height: 30px;
-      border: 2px solid #fff;
-      border-radius: 50%;
+      z-index: 9;
       pointer-events: none;
-      z-index: 100;
     }
-    #instructions {
-      position: fixed;
-      bottom: 20px;
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      background: rgba(255,255,255,0.9);
+      box-shadow: 0 0 6px rgba(255,255,255,0.7);
+    }
+
+    #crosshair::before {
       left: 50%;
+      top: 0;
+      width: 2px;
+      height: 100%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.8);
-      color: #aaa;
-      padding: 15px 25px;
-      border-radius: 8px;
-      font-size: 14px;
-      text-align: center;
-      z-index: 100;
     }
-    .warning {
-      color: #ff4444;
-      font-weight: bold;
+
+    #crosshair::after {
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      transform: translateY(-50%);
+    }
+
+    #message {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      background: rgba(10, 12, 16, 0.72);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      color: #f2ecd8;
+      opacity: 0;
+      transition: opacity 0.22s ease;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    #message.visible {
+      opacity: 1;
     }
   </style>
 </head>
 <body>
-  <div id="ui">
-    <div><strong>SAMURAI 3D</strong></div>
-    <div id="health">Health: <span id="healthValue">100</span></div>
-    <div id="enemies">Enemies: <span id="enemyValue">0</span></div>
-    <div id="kills">Kills: <span id="killValue">0</span></div>
-    <div id="location">Location: <span id="locValue">Forest</span></div>
+  <div id="hud">
+    <div class="line"><span class="label">Health</span><span id="healthValue" class="value">100</span></div>
+    <div class="line"><span class="label">Enemies</span><span id="enemyValue" class="value">0</span></div>
+    <div class="line"><span class="label">Kills</span><span id="killValue" class="value">0</span></div>
   </div>
+
+  <div id="status">Forest</div>
   <div id="crosshair"></div>
-  <div id="instructions">
-    <strong>WASD</strong> = Move | <strong>MOUSE</strong> = Look | <strong>CLICK</strong> = Attack | <strong>SPACE</strong> = Jump
-  </div>
+  <div id="message">Click to lock pointer</div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
   <script>
-    // Scene setup
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb);
-    scene.fog = new THREE.Fog(0x87ceeb, 100, 200);
+    scene.background = new THREE.Color(0x8cc9ff);
+    scene.fog = new THREE.Fog(0x8cc9ff, 30, 120);
 
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 5, 15);
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 250);
+    camera.position.set(0, 5, 12);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMapShadowMap;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambientLight);
+    const ambient = new THREE.HemisphereLight(0xddeeff, 0x2d3c2e, 1.5);
+    scene.add(ambient);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(50, 50, 50);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
-    directionalLight.shadow.camera.far = 200;
-    directionalLight.shadow.camera.left = -100;
-    directionalLight.shadow.camera.right = 100;
-    directionalLight.shadow.camera.top = 100;
-    directionalLight.shadow.camera.bottom = -100;
-    scene.add(directionalLight);
+    const sun = new THREE.DirectionalLight(0xfff3d2, 1.7);
+    sun.position.set(12, 20, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -50;
+    sun.shadow.camera.right = 50;
+    sun.shadow.camera.top = 50;
+    sun.shadow.camera.bottom = -50;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 120;
+    scene.add(sun);
 
-    // Ground
-    const groundGeometry = new THREE.PlaneGeometry(200, 200);
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.8 });
-    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(80, 120),
+      new THREE.MeshStandardMaterial({ color: 0x496d3d, roughness: 0.95, metalness: 0.02 })
+    );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Create a simple 3D samurai player
-    function createPlayer() {
-      const playerGroup = new THREE.Group();
+    const townCircle = new THREE.Mesh(
+      new THREE.CircleGeometry(18, 100),
+      new THREE.MeshStandardMaterial({ color: 0xc4b59d, roughness: 1, metalness: 0.02 })
+    );
+    townCircle.rotation.x = -Math.PI / 2;
+    townCircle.position.y = 0.02;
+    townCircle.receiveShadow = true;
+    scene.add(townCircle);
 
-      // Body
-      const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
-      const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7 });
-      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-      body.position.y = 1;
-      body.castShadow = true;
-      playerGroup.add(body);
+    const world = {
+      playerHealth: 100,
+      score: 0,
+      enemyCount: 0,
+      inTown: false,
+      messageTimer: 0,
+      lastAttack: 0,
+      lastEnemyDamage: 0
+    };
 
-      // Head
-      const headGeometry = new THREE.SphereGeometry(0.3, 32, 32);
-      const headMaterial = new THREE.MeshStandardMaterial({ color: 0xfdbcb4, roughness: 0.8 });
-      const head = new THREE.Mesh(headGeometry, headMaterial);
-      head.position.y = 1.8;
-      head.castShadow = true;
-      playerGroup.add(head);
+    const keys = {};
+    const player = new THREE.Group();
+    player.position.set(0, 0, 12);
 
-      // Sword
-      const swordGeometry = new THREE.BoxGeometry(0.1, 1.2, 0.05);
-      const swordMaterial = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.9, roughness: 0.2 });
-      const sword = new THREE.Mesh(swordGeometry, swordMaterial);
-      sword.position.set(0.4, 1.2, 0);
-      sword.castShadow = true;
-      sword.name = 'sword';
-      playerGroup.add(sword);
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.65, 0.8, 2.2, 16),
+      new THREE.MeshStandardMaterial({ color: 0x2e2c30, roughness: 0.7, metalness: 0.15 })
+    );
+    body.position.y = 1.2;
+    body.castShadow = true;
+    player.add(body);
 
-      // Armor/Chest
-      const armorGeometry = new THREE.BoxGeometry(0.6, 1.2, 0.4);
-      const armorMaterial = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, metalness: 0.6, roughness: 0.4 });
-      const armor = new THREE.Mesh(armorGeometry, armorMaterial);
-      armor.position.y = 0.9;
-      armor.castShadow = true;
-      playerGroup.add(armor);
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.42, 18, 18),
+      new THREE.MeshStandardMaterial({ color: 0xeac7aa, roughness: 0.92 })
+    );
+    head.position.y = 2.7;
+    head.castShadow = true;
+    player.add(head);
 
-      return playerGroup;
+    const armor = new THREE.Mesh(
+      new THREE.BoxGeometry(1.1, 1.3, 0.55),
+      new THREE.MeshStandardMaterial({ color: 0x3b3e42, roughness: 0.68, metalness: 0.35 })
+    );
+    armor.position.y = 1.35;
+    armor.castShadow = true;
+    player.add(armor);
+
+    const sword = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 2.2, 0.12),
+      new THREE.MeshStandardMaterial({ color: 0xd3d7dd, metalness: 0.95, roughness: 0.25 })
+    );
+    sword.position.set(0.95, 1.7, 0.15);
+    sword.rotation.z = -0.85;
+    sword.castShadow = true;
+    player.add(sword);
+
+    const simpleShield = new THREE.Mesh(
+      new THREE.BoxGeometry(0.72, 1.1, 0.12),
+      new THREE.MeshStandardMaterial({ color: 0x7c5d40, roughness: 0.7, metalness: 0.12 })
+    );
+    simpleShield.position.set(-0.9, 1.5, 0.1);
+    simpleShield.castShadow = true;
+    player.add(simpleShield);
+
+    scene.add(player);
+
+    const playerState = {
+      yaw: 0,
+      pitch: -0.3,
+      velocityY: 0,
+      grounded: true,
+      attackTimer: 0
+    };
+
+    function showMessage(text) {
+      const msgEl = document.getElementById('message');
+      msgEl.textContent = text;
+      msgEl.classList.add('visible');
+      world.messageTimer = 2.2;
     }
 
-    // Create enemies
+    function updateHUD() {
+      document.getElementById('healthValue').textContent = Math.max(0, world.playerHealth);
+      document.getElementById('enemyValue').textContent = enemies.filter(e => e.alive).length;
+      document.getElementById('killValue').textContent = world.score;
+
+      const statusEl = document.getElementById('status');
+      statusEl.textContent = world.inTown ? 'Town' : 'Forest';
+      statusEl.style.color = world.inTown ? '#9bf2be' : '#fef3be';
+    }
+
+    function addTree(x, z, scale = 1) {
+      const g = new THREE.Group();
+      const trunk = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.28 * scale, 0.35 * scale, 2.5 * scale, 12),
+        new THREE.MeshStandardMaterial({ color: 0x5a3622, roughness: 0.9 })
+      );
+      trunk.position.y = 1.25 * scale;
+      trunk.castShadow = true;
+      g.add(trunk);
+
+      const leaves = new THREE.Mesh(
+        new THREE.SphereGeometry(1.3 * scale, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0x2f7a3a, roughness: 0.8 })
+      );
+      leaves.position.y = 3.2 * scale;
+      leaves.castShadow = true;
+      g.add(leaves);
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+    }
+
+    function addHouse(x, z, scale = 1) {
+      const g = new THREE.Group();
+      const base = new THREE.Mesh(
+        new THREE.BoxGeometry(3.3 * scale, 2.7 * scale, 3.2 * scale),
+        new THREE.MeshStandardMaterial({ color: 0xe5d4b6, roughness: 0.9 })
+      );
+      base.position.y = 1.35 * scale;
+      base.castShadow = true;
+      g.add(base);
+
+      const roof = new THREE.Mesh(
+        new THREE.ConeGeometry(2.3 * scale, 2.1 * scale, 4),
+        new THREE.MeshStandardMaterial({ color: 0x874d38, roughness: 0.7 })
+      );
+      roof.position.y = 3.5 * scale;
+      roof.rotation.y = Math.PI / 4;
+      roof.castShadow = true;
+      g.add(roof);
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+    }
+
+    function addLantern(x, z) {
+      const g = new THREE.Group();
+      const post = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 2, 8),
+        new THREE.MeshStandardMaterial({ color: 0x4d413b, roughness: 0.8 })
+      );
+      post.position.y = 1;
+      post.castShadow = true;
+      g.add(post);
+
+      const glow = new THREE.Mesh(
+        new THREE.SphereGeometry(0.2, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0xffd286, emissive: 0xffbe5f, emissiveIntensity: 1.8 })
+      );
+      glow.position.y = 2.3;
+      g.add(glow);
+
+      g.position.set(x, 0, z);
+      scene.add(g);
+    }
+
+    function buildEnvironment() {
+      for (let i = 0; i < 45; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 18 + Math.random() * 52;
+        const x = Math.cos(angle) * dist;
+        const z = Math.sin(angle) * dist;
+        addTree(x, z, 0.8 + Math.random() * 0.8);
+      }
+
+      const townCoords = [
+        [-7, -4], [2, -7], [-10, 7], [8, 6], [11, -2], [0, 11], [-3, 0], [7, 0]
+      ];
+      townCoords.forEach(([x, z], idx) => {
+        addHouse(x, z, 0.9 + ((idx % 2) * 0.2));
+      });
+
+      for (let i = 0; i < 12; i++) {
+        const angle = (i / 12) * Math.PI * 2;
+        const r = 15.5;
+        addLantern(Math.cos(angle) * r, Math.sin(angle) * r);
+      }
+
+      const shrineBase = new THREE.Mesh(
+        new THREE.CylinderGeometry(3.6, 4.6, 1.8, 30),
+        new THREE.MeshStandardMaterial({ color: 0x8d959d, roughness: 0.8 })
+      );
+      shrineBase.position.set(0, 0.9, 0);
+      shrineBase.castShadow = true;
+      shrineBase.receiveShadow = true;
+      scene.add(shrineBase);
+
+      const shrineRoof = new THREE.Mesh(
+        new THREE.ConeGeometry(3.6, 2.4, 4),
+        new THREE.MeshStandardMaterial({ color: 0x8b1e2d, roughness: 0.62 })
+      );
+      shrineRoof.position.set(0, 3.4, 0);
+      shrineRoof.rotation.y = Math.PI / 4;
+      shrineRoof.castShadow = true;
+      scene.add(shrineRoof);
+    }
+
+    buildEnvironment();
+
+    const enemies = [];
+
     function createEnemy(x, z) {
-      const enemyGroup = new THREE.Group();
+      const g = new THREE.Group();
 
-      // Body
-      const bodyGeometry = new THREE.BoxGeometry(0.4, 1.3, 0.3);
-      const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.7 });
-      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-      body.position.y = 0.8;
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.5, 0.7, 2.1, 14),
+        new THREE.MeshStandardMaterial({ color: 0x8b1e1e, roughness: 0.75, metalness: 0.08 })
+      );
+      body.position.y = 1.15;
       body.castShadow = true;
-      enemyGroup.add(body);
+      g.add(body);
 
-      // Head
-      const headGeometry = new THREE.SphereGeometry(0.25, 32, 32);
-      const headMaterial = new THREE.MeshStandardMaterial({ color: 0xfdbcb4, roughness: 0.8 });
-      const head = new THREE.Mesh(headGeometry, headMaterial);
-      head.position.y = 1.6;
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.35, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xe7d0aa, roughness: 0.9 })
+      );
+      head.position.y = 2.6;
       head.castShadow = true;
-      enemyGroup.add(head);
+      g.add(head);
 
-      // Weapon
-      const weaponGeometry = new THREE.BoxGeometry(0.08, 1, 0.04);
-      const weaponMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.7 });
-      const weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
-      weapon.position.set(0.3, 1, 0);
-      weapon.castShadow = true;
-      enemyGroup.add(weapon);
+      const katana = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 1.8, 0.09),
+        new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.85, roughness: 0.25 })
+      );
+      katana.position.set(0.75, 1.5, 0.12);
+      katana.rotation.z = 0.7;
+      katana.castShadow = true;
+      g.add(katana);
 
-      enemyGroup.position.set(x, 0, z);
-      scene.add(enemyGroup);
+      g.position.set(x, 0, z);
+      scene.add(g);
 
       return {
-        mesh: enemyGroup,
-        health: 50,
-        maxHealth: 50,
-        speed: 0.03,
-        lastAttack: 0,
+        group: g,
+        health: 80,
+        speed: 1.9 + Math.random() * 0.9,
+        cooldown: 0,
         alive: true
       };
     }
 
-    // Create trees/obstacles
-    function createTrees() {
-      for (let i = 0; i < 20; i++) {
-        const x = (Math.random() - 0.5) * 150;
-        const z = (Math.random() - 0.5) * 150;
-
-        // Trunk
-        const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.4, 4, 16);
-        const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 });
-        const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
-        trunk.position.set(x, 2, z);
-        trunk.castShadow = true;
-        scene.add(trunk);
-
-        // Foliage
-        const foliageGeometry = new THREE.SphereGeometry(2, 8, 8);
-        const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.9 });
-        const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
-        foliage.position.set(x, 5, z);
-        foliage.castShadow = true;
-        scene.add(foliage);
-      }
+    for (let i = 0; i < 9; i++) {
+      const angle = (i / 9) * Math.PI * 2;
+      const radius = 28 + Math.random() * 18;
+      const x = Math.cos(angle) * radius;
+      const z = Math.sin(angle) * radius;
+      enemies.push(createEnemy(x, z));
     }
+    world.enemyCount = enemies.length;
 
-    // Create a town area
-    function createTown() {
-      // Buildings
-      for (let i = 0; i < 8; i++) {
-        const angle = (i / 8) * Math.PI * 2;
-        const radius = 25;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-
-        const buildingGeometry = new THREE.BoxGeometry(4, 4, 4);
-        const buildingMaterial = new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.8 });
-        const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
-        building.position.set(x, 2, z);
-        building.castShadow = true;
-        scene.add(building);
-
-        // Roof
-        const roofGeometry = new THREE.ConeGeometry(2.5, 2, 4);
-        const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
-        const roof = new THREE.Mesh(roofGeometry, roofMaterial);
-        roof.position.set(x, 5, z);
-        roof.castShadow = true;
-        scene.add(roof);
-      }
-    }
-
-    // Game state
-    const gameState = {
-      playerHealth: 100,
-      kills: 0,
-      enemies: [],
-      currentLocation: 'Forest',
-      playerAttackCooldown: 0,
-      playerJumping: false,
-      playerVelocityY: 0
+    const pointer = {
+      locked: false
     };
 
-    const player = createPlayer();
-    player.position.set(0, 0, 0);
-    scene.add(player);
+    function attack() {
+      const now = performance.now();
+      if (now - world.lastAttack < 500) return;
+      world.lastAttack = now;
+      playerState.attackTimer = 0.25;
+      sword.rotation.z = -1.8;
 
-    createTrees();
-    createTown();
+      const forward = new THREE.Vector3(Math.sin(playerState.yaw), 0, Math.cos(playerState.yaw));
 
-    // Spawn enemies
-    for (let i = 0; i < 8; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const distance = 30 + Math.random() * 40;
-      const x = Math.cos(angle) * distance;
-      const z = Math.sin(angle) * distance;
-      gameState.enemies.push(createEnemy(x, z));
-    }
-
-    // Input handling
-    const keys = {};
-    window.addEventListener('keydown', (e) => {
-      keys[e.key] = true;
-      if (e.key === ' ') gameState.playerJumping = true;
-    });
-    window.addEventListener('keyup', (e) => {
-      keys[e.key] = false;
-    });
-
-    let mouseDown = false;
-    window.addEventListener('mousedown', () => {
-      mouseDown = true;
-    });
-    window.addEventListener('mouseup', () => {
-      mouseDown = false;
-    });
-
-    let mouseX = 0, mouseY = 0;
-    document.addEventListener('mousemove', (e) => {
-      mouseX = e.clientX;
-      mouseY = e.clientY;
-    });
-
-    // Update player position and camera
-    function updatePlayer() {
-      const moveSpeed = 0.3;
-      const direction = new THREE.Vector3();
-
-      if (keys['w'] || keys['W']) {
-        direction.z -= moveSpeed;
-      }
-      if (keys['s'] || keys['S']) {
-        direction.z += moveSpeed;
-      }
-      if (keys['a'] || keys['A']) {
-        direction.x -= moveSpeed;
-      }
-      if (keys['d'] || keys['D']) {
-        direction.x += moveSpeed;
-      }
-
-      player.position.add(direction);
-
-      // Boundary check
-      if (player.position.x > 100) player.position.x = 100;
-      if (player.position.x < -100) player.position.x = -100;
-      if (player.position.z > 100) player.position.z = 100;
-      if (player.position.z < -100) player.position.z = -100;
-
-      // Jump
-      if (gameState.playerJumping && player.position.y <= 0.1) {
-        gameState.playerVelocityY = 0.3;
-        gameState.playerJumping = false;
-      }
-      gameState.playerVelocityY -= 0.01; // Gravity
-      player.position.y += gameState.playerVelocityY;
-      if (player.position.y < 0) {
-        player.position.y = 0;
-        gameState.playerVelocityY = 0;
-      }
-
-      // Update camera to follow player
-      camera.position.x = player.position.x;
-      camera.position.y = player.position.y + 3;
-      camera.position.z = player.position.z + 8;
-      camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
-
-      // Update location based on position
-      const distToTown = Math.sqrt(player.position.x ** 2 + player.position.z ** 2);
-      gameState.currentLocation = distToTown < 30 ? 'Town' : 'Forest';
-
-      // Rotate player based on mouse
-      const centerX = window.innerWidth / 2;
-      const centerY = window.innerHeight / 2;
-      const angleX = (mouseX - centerX) / window.innerWidth;
-      player.rotation.y = angleX * Math.PI;
-    }
-
-    // Attack logic
-    function attackEnemy() {
-      if (gameState.playerAttackCooldown > 0) return;
-
-      const attackRange = 3;
-      const sword = player.getObjectByName('sword');
-      if (sword) {
-        sword.rotation.z = -Math.PI / 4; // Swing animation
-      }
-
-      for (let i = 0; i < gameState.enemies.length; i++) {
-        const enemy = gameState.enemies[i];
-        if (!enemy.alive) continue;
-
-        const distance = player.position.distanceTo(enemy.mesh.position);
-        if (distance < attackRange) {
-          enemy.health -= 25;
+      enemies.forEach((enemy) => {
+        if (!enemy.alive) return;
+        const toEnemy = enemy.group.position.clone().sub(player.position);
+        const dist = toEnemy.length();
+        if (dist > 3.2) return;
+        const dir = toEnemy.normalize();
+        if (forward.dot(dir) > 0.2) {
+          enemy.health -= 34;
           if (enemy.health <= 0) {
             enemy.alive = false;
-            scene.remove(enemy.mesh);
-            gameState.kills++;
+            enemy.group.visible = false;
+            scene.remove(enemy.group);
+            world.score += 10;
+            showMessage('Enemy defeated!');
           }
         }
-      }
-
-      gameState.playerAttackCooldown = 0.5;
+      });
     }
 
-    // Update enemies
-    function updateEnemies() {
-      for (let enemy of gameState.enemies) {
-        if (!enemy.alive) continue;
+    function updatePlayer(dt) {
+      const move = new THREE.Vector3();
+      const forward = new THREE.Vector3(Math.sin(playerState.yaw), 0, Math.cos(playerState.yaw));
+      const right = new THREE.Vector3(forward.z, 0, -forward.x);
 
-        // Move towards player
-        const direction = player.position.clone().sub(enemy.mesh.position).normalize();
-        enemy.mesh.position.add(direction.multiplyScalar(enemy.speed));
+      if (keys['w'] || keys['W']) move.add(forward);
+      if (keys['s'] || keys['S']) move.sub(forward);
+      if (keys['a'] || keys['A']) move.sub(right);
+      if (keys['d'] || keys['D']) move.add(right);
 
-        // Look at player
-        enemy.mesh.lookAt(player.position);
+      if (move.lengthSq() > 0) {
+        move.normalize();
+        const speed = 12;
+        player.position.x += move.x * speed * dt;
+        player.position.z += move.z * speed * dt;
+      }
 
-        // Attack player
-        const distance = player.position.distanceTo(enemy.mesh.position);
-        if (distance < 2) {
-          if (Date.now() - enemy.lastAttack > 1000) {
-            gameState.playerHealth -= 10;
-            enemy.lastAttack = Date.now();
+      const dist = Math.hypot(player.position.x, player.position.z);
+      const bound = 74;
+      if (dist > bound) {
+        const nx = player.position.x / (dist || 1);
+        const nz = player.position.z / (dist || 1);
+        player.position.x = nx * bound;
+        player.position.z = nz * bound;
+      }
+
+      if (keys[' '] && playerState.grounded) {
+        playerState.velocityY = 10.5;
+        playerState.grounded = false;
+      }
+
+      playerState.velocityY -= 26 * dt;
+      player.position.y += playerState.velocityY * dt;
+      if (player.position.y < 0) {
+        player.position.y = 0;
+        playerState.velocityY = 0;
+        playerState.grounded = true;
+      }
+
+      player.rotation.y = playerState.yaw;
+
+      const cameraOffset = new THREE.Vector3(
+        -Math.sin(playerState.yaw) * 7.5,
+        4.8 + Math.sin(playerState.pitch + 0.6) * 2.4,
+        -Math.cos(playerState.yaw) * 7.5
+      );
+
+      camera.position.lerp(player.position.clone().add(cameraOffset), 0.12);
+      const lookTarget = player.position.clone().add(new THREE.Vector3(0, 2.2, 0));
+      camera.lookAt(lookTarget);
+
+      world.inTown = Math.hypot(player.position.x, player.position.z) < 15;
+      updateHUD();
+    }
+
+    function updateEnemies(dt) {
+      enemies.forEach((enemy) => {
+        if (!enemy.alive) return;
+
+        const toPlayer = player.position.clone().sub(enemy.group.position);
+        if (toPlayer.lengthSq() > 0.0001) {
+          const dir = toPlayer.normalize();
+          enemy.group.position.add(dir.multiplyScalar(enemy.speed * dt));
+          enemy.group.lookAt(player.position.x, 1.5, player.position.z);
+        }
+
+        const dist = player.position.distanceTo(enemy.group.position);
+        if (dist < 2.2 && enemy.cooldown <= 0) {
+          world.playerHealth -= 12;
+          enemy.cooldown = 1.2;
+          showMessage('You were hit!');
+          if (world.playerHealth <= 0) {
+            world.playerHealth = 0;
+            showMessage('Defeated. Refresh to restart');
           }
         }
-      }
 
-      // Remove dead enemies
-      gameState.enemies = gameState.enemies.filter((e) => e.alive);
+        enemy.cooldown = Math.max(0, enemy.cooldown - dt);
+      });
     }
 
-    // Update UI
-    function updateUI() {
-      document.getElementById('healthValue').textContent = Math.max(0, gameState.playerHealth);
-      document.getElementById('enemyValue').textContent = gameState.enemies.filter((e) => e.alive).length;
-      document.getElementById('killValue').textContent = gameState.kills;
-      document.getElementById('locValue').textContent = gameState.currentLocation;
-
-      if (gameState.playerHealth <= 0) {
-        document.getElementById('health').innerHTML = '<span class="warning">Health: DEAD - Refresh to restart</span>';
+    function updateCombat(dt) {
+      if (playerState.attackTimer > 0) {
+        playerState.attackTimer -= dt;
+        sword.rotation.z = -0.85 + (1 - playerState.attackTimer / 0.25) * 2.8;
+      } else {
+        sword.rotation.z = -0.85;
       }
     }
 
-    // Cooldown update
-    function updateCooldowns(deltaTime) {
-      if (gameState.playerAttackCooldown > 0) {
-        gameState.playerAttackCooldown -= deltaTime;
+    document.addEventListener('keydown', (event) => {
+      keys[event.code] = true;
+      if (event.code === 'Space') {
+        event.preventDefault();
       }
+    });
 
-      const sword = player.getObjectByName('sword');
-      if (sword && gameState.playerAttackCooldown < 0.3) {
-        sword.rotation.z = 0;
+    document.addEventListener('keyup', (event) => {
+      keys[event.code] = false;
+    });
+
+    window.addEventListener('mousedown', (event) => {
+      if (event.button === 0) {
+        if (document.pointerLockElement !== renderer.domElement) {
+          renderer.domElement.requestPointerLock();
+          return;
+        }
+        attack();
       }
-    }
+    });
 
-    // Main animation loop
-    const clock = new THREE.Clock();
+    document.addEventListener('mousemove', (event) => {
+      if (document.pointerLockElement === renderer.domElement) {
+        playerState.yaw -= event.movementX * 0.0024;
+        playerState.pitch -= event.movementY * 0.0016;
+        playerState.pitch = THREE.MathUtils.clamp(playerState.pitch, -1.0, 0.75);
+      }
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      pointer.locked = document.pointerLockElement === renderer.domElement;
+      const msg = document.getElementById('message');
+      msg.textContent = pointer.locked ? 'Enter the town and hunt the samurai bandits.' : 'Click to lock pointer';
+      if (pointer.locked) {
+        msg.classList.remove('visible');
+      } else {
+        msg.classList.add('visible');
+      }
+    });
+
     function animate() {
       requestAnimationFrame(animate);
+      const dt = Math.min(0.033, clock.getDelta());
 
-      const deltaTime = clock.getDelta();
+      if (world.playerHealth > 0) {
+        updatePlayer(dt);
+        updateCombat(dt);
+        updateEnemies(dt);
+      }
 
-      if (gameState.playerHealth > 0) {
-        updatePlayer();
-        updateCooldowns(deltaTime);
-        updateEnemies();
-
-        if (mouseDown) {
-          attackEnemy();
+      if (world.messageTimer > 0) {
+        world.messageTimer -= dt;
+        if (world.messageTimer <= 0) {
+          const msg = document.getElementById('message');
+          msg.classList.remove('visible');
         }
       }
 
-      updateUI();
       renderer.render(scene, camera);
     }
 
+    const clock = new THREE.Clock();
     animate();
 
-    // Handle window resize
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
