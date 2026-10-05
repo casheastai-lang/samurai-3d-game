@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ronin's Road</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="vignette"></div>
+
+  <div id="hud" class="hidden">
+    <div id="stats">
+      <div class="row"><span class="lbl">HP</span><div class="bar"><div id="hpFill" class="fill hp"></div><span id="hpText" class="bartext"></span></div></div>
+      <div class="row"><span class="lbl">ST</span><div class="bar"><div id="stFill" class="fill st"></div></div></div>
+      <div class="row"><span class="lbl">XP</span><div class="bar thin"><div id="xpFill" class="fill xp"></div></div></div>
+      <div id="info">Lv <b id="lvl">1</b> &middot; <span class="gold">&#9672; <b id="gold">0</b></span> &middot; Potions <b id="pots">0</b> &middot; Elixirs <b id="elx">0</b></div>
+      <div id="gear"></div>
+    </div>
+    <div id="location"><div id="locName"></div><div id="locSub"></div></div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="prompt"></div>
+    <div id="banner"><div id="bannerTitle"></div><div id="bannerSub"></div></div>
+    <div id="bossbar" class="hidden"><div id="bossName"></div><div class="bar boss"><div id="bossFill" class="fill"></div></div></div>
+    <div id="hint">WASD move &middot; Mouse look &middot; Click / J slash &middot; Right-click / K heavy &middot; Space jump &middot; F dodge &middot; Shift sprint &middot; E interact &middot; Q potion &middot; R elixir &middot; M map &middot; H help</div>
+    <div id="lockHint">Click the game to control the camera</div>
+  </div>
+
+  <div id="floaters"></div>
+  <div id="fade"></div>
+
+  <div id="bigmap" class="hidden">
+    <canvas id="bigmapCanvas" width="560" height="760"></canvas>
+    <p>Press M to close</p>
+  </div>
+
+  <div id="modal" class="hidden"><div id="modalBox"></div></div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
