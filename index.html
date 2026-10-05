@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Samurai Game</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      width: 100%;
+      height: 100vh;
+      background: #000;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #ui {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 20px;
+      border-radius: 8px;
+      font-size: 16px;
+      z-index: 100;
+      line-height: 1.8;
+    }
+    #ui div {
+      margin: 5px 0;
+    }
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 30px;
+      height: 30px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 100;
+    }
+    #instructions {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #aaa;
+      padding: 15px 25px;
+      border-radius: 8px;
+      font-size: 14px;
+      text-align: center;
+      z-index: 100;
+    }
+    .warning {
+      color: #ff4444;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div><strong>SAMURAI 3D</strong></div>
+    <div id="health">Health: <span id="healthValue">100</span></div>
+    <div id="enemies">Enemies: <span id="enemyValue">0</span></div>
+    <div id="kills">Kills: <span id="killValue">0</span></div>
+    <div id="location">Location: <span id="locValue">Forest</span></div>
+  </div>
+  <div id="crosshair"></div>
+  <div id="instructions">
+    <strong>WASD</strong> = Move | <strong>MOUSE</strong> = Look | <strong>CLICK</strong> = Attack | <strong>SPACE</strong> = Jump
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 100, 200);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 5, 15);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMapShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(50, 50, 50);
+    directionalLight.castShadow = true;
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.far = 200;
+    directionalLight.shadow.camera.left = -100;
+    directionalLight.shadow.camera.right = 100;
+    directionalLight.shadow.camera.top = 100;
+    directionalLight.shadow.camera.bottom = -100;
+    scene.add(directionalLight);
+
+    // Ground
+    const groundGeometry = new THREE.PlaneGeometry(200, 200);
+    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.8 });
+    const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Create a simple 3D samurai player
+    function createPlayer() {
+      const playerGroup = new THREE.Group();
+
+      // Body
+      const bodyGeometry = new THREE.BoxGeometry(0.5, 1.5, 0.3);
+      const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.7 });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.position.y = 1;
+      body.castShadow = true;
+      playerGroup.add(body);
+
+      // Head
+      const headGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+      const headMaterial = new THREE.MeshStandardMaterial({ color: 0xfdbcb4, roughness: 0.8 });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 1.8;
+      head.castShadow = true;
+      playerGroup.add(head);
+
+      // Sword
+      const swordGeometry = new THREE.BoxGeometry(0.1, 1.2, 0.05);
+      const swordMaterial = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.9, roughness: 0.2 });
+      const sword = new THREE.Mesh(swordGeometry, swordMaterial);
+      sword.position.set(0.4, 1.2, 0);
+      sword.castShadow = true;
+      sword.name = 'sword';
+      playerGroup.add(sword);
+
+      // Armor/Chest
+      const armorGeometry = new THREE.BoxGeometry(0.6, 1.2, 0.4);
+      const armorMaterial = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, metalness: 0.6, roughness: 0.4 });
+      const armor = new THREE.Mesh(armorGeometry, armorMaterial);
+      armor.position.y = 0.9;
+      armor.castShadow = true;
+      playerGroup.add(armor);
+
+      return playerGroup;
+    }
+
+    // Create enemies
+    function createEnemy(x, z) {
+      const enemyGroup = new THREE.Group();
+
+      // Body
+      const bodyGeometry = new THREE.BoxGeometry(0.4, 1.3, 0.3);
+      const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x8b0000, roughness: 0.7 });
+      const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+      body.position.y = 0.8;
+      body.castShadow = true;
+      enemyGroup.add(body);
+
+      // Head
+      const headGeometry = new THREE.SphereGeometry(0.25, 32, 32);
+      const headMaterial = new THREE.MeshStandardMaterial({ color: 0xfdbcb4, roughness: 0.8 });
+      const head = new THREE.Mesh(headGeometry, headMaterial);
+      head.position.y = 1.6;
+      head.castShadow = true;
+      enemyGroup.add(head);
+
+      // Weapon
+      const weaponGeometry = new THREE.BoxGeometry(0.08, 1, 0.04);
+      const weaponMaterial = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.7 });
+      const weapon = new THREE.Mesh(weaponGeometry, weaponMaterial);
+      weapon.position.set(0.3, 1, 0);
+      weapon.castShadow = true;
+      enemyGroup.add(weapon);
+
+      enemyGroup.position.set(x, 0, z);
+      scene.add(enemyGroup);
+
+      return {
+        mesh: enemyGroup,
+        health: 50,
+        maxHealth: 50,
+        speed: 0.03,
+        lastAttack: 0,
+        alive: true
+      };
+    }
+
+    // Create trees/obstacles
+    function createTrees() {
+      for (let i = 0; i < 20; i++) {
+        const x = (Math.random() - 0.5) * 150;
+        const z = (Math.random() - 0.5) * 150;
+
+        // Trunk
+        const trunkGeometry = new THREE.CylinderGeometry(0.3, 0.4, 4, 16);
+        const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 });
+        const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+        trunk.position.set(x, 2, z);
+        trunk.castShadow = true;
+        scene.add(trunk);
+
+        // Foliage
+        const foliageGeometry = new THREE.SphereGeometry(2, 8, 8);
+        const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x228b22, roughness: 0.9 });
+        const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
+        foliage.position.set(x, 5, z);
+        foliage.castShadow = true;
+        scene.add(foliage);
+      }
+    }
+
+    // Create a town area
+    function createTown() {
+      // Buildings
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        const radius = 25;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+
+        const buildingGeometry = new THREE.BoxGeometry(4, 4, 4);
+        const buildingMaterial = new THREE.MeshStandardMaterial({ color: 0xd2b48c, roughness: 0.8 });
+        const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+        building.position.set(x, 2, z);
+        building.castShadow = true;
+        scene.add(building);
+
+        // Roof
+        const roofGeometry = new THREE.ConeGeometry(2.5, 2, 4);
+        const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+        const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+        roof.position.set(x, 5, z);
+        roof.castShadow = true;
+        scene.add(roof);
+      }
+    }
+
+    // Game state
+    const gameState = {
+      playerHealth: 100,
+      kills: 0,
+      enemies: [],
+      currentLocation: 'Forest',
+      playerAttackCooldown: 0,
+      playerJumping: false,
+      playerVelocityY: 0
+    };
+
+    const player = createPlayer();
+    player.position.set(0, 0, 0);
+    scene.add(player);
+
+    createTrees();
+    createTown();
+
+    // Spawn enemies
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 30 + Math.random() * 40;
+      const x = Math.cos(angle) * distance;
+      const z = Math.sin(angle) * distance;
+      gameState.enemies.push(createEnemy(x, z));
+    }
+
+    // Input handling
+    const keys = {};
+    window.addEventListener('keydown', (e) => {
+      keys[e.key] = true;
+      if (e.key === ' ') gameState.playerJumping = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      keys[e.key] = false;
+    });
+
+    let mouseDown = false;
+    window.addEventListener('mousedown', () => {
+      mouseDown = true;
+    });
+    window.addEventListener('mouseup', () => {
+      mouseDown = false;
+    });
+
+    let mouseX = 0, mouseY = 0;
+    document.addEventListener('mousemove', (e) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    });
+
+    // Update player position and camera
+    function updatePlayer() {
+      const moveSpeed = 0.3;
+      const direction = new THREE.Vector3();
+
+      if (keys['w'] || keys['W']) {
+        direction.z -= moveSpeed;
+      }
+      if (keys['s'] || keys['S']) {
+        direction.z += moveSpeed;
+      }
+      if (keys['a'] || keys['A']) {
+        direction.x -= moveSpeed;
+      }
+      if (keys['d'] || keys['D']) {
+        direction.x += moveSpeed;
+      }
+
+      player.position.add(direction);
+
+      // Boundary check
+      if (player.position.x > 100) player.position.x = 100;
+      if (player.position.x < -100) player.position.x = -100;
+      if (player.position.z > 100) player.position.z = 100;
+      if (player.position.z < -100) player.position.z = -100;
+
+      // Jump
+      if (gameState.playerJumping && player.position.y <= 0.1) {
+        gameState.playerVelocityY = 0.3;
+        gameState.playerJumping = false;
+      }
+      gameState.playerVelocityY -= 0.01; // Gravity
+      player.position.y += gameState.playerVelocityY;
+      if (player.position.y < 0) {
+        player.position.y = 0;
+        gameState.playerVelocityY = 0;
+      }
+
+      // Update camera to follow player
+      camera.position.x = player.position.x;
+      camera.position.y = player.position.y + 3;
+      camera.position.z = player.position.z + 8;
+      camera.lookAt(player.position.x, player.position.y + 1, player.position.z);
+
+      // Update location based on position
+      const distToTown = Math.sqrt(player.position.x ** 2 + player.position.z ** 2);
+      gameState.currentLocation = distToTown < 30 ? 'Town' : 'Forest';
+
+      // Rotate player based on mouse
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      const angleX = (mouseX - centerX) / window.innerWidth;
+      player.rotation.y = angleX * Math.PI;
+    }
+
+    // Attack logic
+    function attackEnemy() {
+      if (gameState.playerAttackCooldown > 0) return;
+
+      const attackRange = 3;
+      const sword = player.getObjectByName('sword');
+      if (sword) {
+        sword.rotation.z = -Math.PI / 4; // Swing animation
+      }
+
+      for (let i = 0; i < gameState.enemies.length; i++) {
+        const enemy = gameState.enemies[i];
+        if (!enemy.alive) continue;
+
+        const distance = player.position.distanceTo(enemy.mesh.position);
+        if (distance < attackRange) {
+          enemy.health -= 25;
+          if (enemy.health <= 0) {
+            enemy.alive = false;
+            scene.remove(enemy.mesh);
+            gameState.kills++;
+          }
+        }
+      }
+
+      gameState.playerAttackCooldown = 0.5;
+    }
+
+    // Update enemies
+    function updateEnemies() {
+      for (let enemy of gameState.enemies) {
+        if (!enemy.alive) continue;
+
+        // Move towards player
+        const direction = player.position.clone().sub(enemy.mesh.position).normalize();
+        enemy.mesh.position.add(direction.multiplyScalar(enemy.speed));
+
+        // Look at player
+        enemy.mesh.lookAt(player.position);
+
+        // Attack player
+        const distance = player.position.distanceTo(enemy.mesh.position);
+        if (distance < 2) {
+          if (Date.now() - enemy.lastAttack > 1000) {
+            gameState.playerHealth -= 10;
+            enemy.lastAttack = Date.now();
+          }
+        }
+      }
+
+      // Remove dead enemies
+      gameState.enemies = gameState.enemies.filter((e) => e.alive);
+    }
+
+    // Update UI
+    function updateUI() {
+      document.getElementById('healthValue').textContent = Math.max(0, gameState.playerHealth);
+      document.getElementById('enemyValue').textContent = gameState.enemies.filter((e) => e.alive).length;
+      document.getElementById('killValue').textContent = gameState.kills;
+      document.getElementById('locValue').textContent = gameState.currentLocation;
+
+      if (gameState.playerHealth <= 0) {
+        document.getElementById('health').innerHTML = '<span class="warning">Health: DEAD - Refresh to restart</span>';
+      }
+    }
+
+    // Cooldown update
+    function updateCooldowns(deltaTime) {
+      if (gameState.playerAttackCooldown > 0) {
+        gameState.playerAttackCooldown -= deltaTime;
+      }
+
+      const sword = player.getObjectByName('sword');
+      if (sword && gameState.playerAttackCooldown < 0.3) {
+        sword.rotation.z = 0;
+      }
+    }
+
+    // Main animation loop
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const deltaTime = clock.getDelta();
+
+      if (gameState.playerHealth > 0) {
+        updatePlayer();
+        updateCooldowns(deltaTime);
+        updateEnemies();
+
+        if (mouseDown) {
+          attackEnemy();
+        }
+      }
+
+      updateUI();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
