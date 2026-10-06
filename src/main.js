@@ -12,7 +12,7 @@ import {
 import { makeHumanoid, makeEnemyModel, makeShuriken } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -36,7 +36,7 @@ const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x5a4a35, 0.55);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe2b8, 3.6);
 sun.castShadow = true;
-Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 260 });
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 260 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
@@ -81,18 +81,40 @@ function refreshEnvironment(key) {
 
 let gfxHigh = true;
 try { gfxHigh = localStorage.getItem('roninsroad.gfx') !== 'low'; } catch { /* default high */ }
-function applyGfx() {
-  const pr = gfxHigh ? Math.min(window.devicePixelRatio, 2) : 1;
+// Dynamic resolution: the render scale drops when frames take too long and climbs back
+// when there is headroom. If it bottoms out on High, the game switches itself to Fast.
+let resScale = 1, frameAvg = 1 / 60, slowFor = 0, tuneTimer = 0;
+const basePixelRatio = () => Math.min(window.devicePixelRatio, gfxHigh ? 1.5 : 1);
+function applyResolution() {
+  const pr = basePixelRatio() * resScale;
   renderer.setPixelRatio(pr);
   composer.setPixelRatio(pr);
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
-  const grass = scene.getObjectByName('grass');
-  if (grass) grass.visible = gfxHigh;
-  const ms = gfxHigh ? 4096 : 1024;
+}
+function applyGfx() {
+  applyResolution();
+  setGrassEnabled(gfxHigh);
+  const ms = gfxHigh ? 2048 : 1024;
   if (sun.shadow.mapSize.x !== ms) {
     sun.shadow.mapSize.set(ms, ms);
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
+  }
+}
+function tuneResolution(rawDt) {
+  if (rawDt > 0.25) return; // tab was hidden or a long hitch: ignore
+  frameAvg = lerp(frameAvg, rawDt, 0.05);
+  tuneTimer += rawDt;
+  if (tuneTimer < 1) return;
+  tuneTimer = 0;
+  if (frameAvg > 1 / 45 && resScale > 0.55) { resScale = Math.max(0.55, resScale - 0.1); applyResolution(); }
+  else if (frameAvg < 1 / 58 && resScale < 1) { resScale = Math.min(1, resScale + 0.05); applyResolution(); }
+  slowFor = frameAvg > 1 / 30 && resScale <= 0.55 ? slowFor + 1 : 0;
+  if (slowFor >= 4 && gfxHigh && started) {
+    gfxHigh = false;
+    slowFor = 0;
+    applyGfx();
+    banner('', 'Switched to Fast graphics to keep the game smooth (press G to change)', 3);
   }
 }
 applyGfx();
@@ -125,7 +147,11 @@ function animateWalk(rig, dt, amt) {
   rig.body.position.y = 1.0 + Math.abs(Math.cos(rig.walk)) * 0.06 * a;
 }
 const REST_ARM = -0.9;
+// The wrist (rig.weapon) angles the blade. At rest it holds a guard: blade up and
+// forward from the fist. In a cut it straightens so the blade follows the swing.
+const wrist = (rig, target, k) => { rig.weapon.rotation.x = lerp(rig.weapon.rotation.x, target, k); };
 function restArm(rig, k = 0.2) {
+  wrist(rig, rig.wristRest ?? 0, k);
   rig.armR.rotation.x = lerp(rig.armR.rotation.x, REST_ARM, k);
   rig.armR.rotation.y = lerp(rig.armR.rotation.y, 0, k);
   rig.armR.rotation.z = lerp(rig.armR.rotation.z, 0, k);
@@ -136,12 +162,14 @@ function restArm(rig, k = 0.2) {
 function poseAttack(rig, anim, t, A) {
   const s = smooth(A.hitAt - 0.09, A.hitAt + 0.05, t);
   const arm = rig.armR, body = rig.body;
-  if (anim === 'slashA') { arm.rotation.set(-1.45, lerp(1.4, -1.5, s), 0); body.rotation.y = lerp(0.45, -0.5, s); }
-  else if (anim === 'slashB') { arm.rotation.set(-1.45, lerp(-1.5, 1.4, s), 0); body.rotation.y = lerp(-0.5, 0.45, s); }
-  else if (anim === 'spin') { arm.rotation.set(-1.5, -1.2, 0); body.rotation.y = lerp(0, -Math.PI * 2, s); }
-  else { arm.rotation.set(lerp(-3.0, -0.5, s), 0, 0); body.rotation.x = lerp(-0.18, 0.25, s); }
+  const w = rig.weapon.rotation;
+  if (anim === 'slashA') { arm.rotation.set(-1.45, lerp(1.4, -1.5, s), 0); body.rotation.y = lerp(0.45, -0.5, s); w.x = lerp(-1.1, -0.15, s); }
+  else if (anim === 'slashB') { arm.rotation.set(-1.45, lerp(-1.5, 1.4, s), 0); body.rotation.y = lerp(-0.5, 0.45, s); w.x = lerp(-1.1, -0.15, s); }
+  else if (anim === 'spin') { arm.rotation.set(-1.5, -1.2, 0); body.rotation.y = lerp(0, -Math.PI * 2, s); w.x = -0.1; }
+  else { arm.rotation.set(lerp(-3.0, -0.5, s), 0, 0); body.rotation.x = lerp(-0.18, 0.25, s); w.x = lerp(-0.7, -0.2, s); }
   const r = smooth(A.hitAt + 0.1, A.dur, t);
   if (r > 0) {
+    w.x = lerp(w.x, rig.wristRest ?? 0, r);
     arm.rotation.x = lerp(arm.rotation.x, REST_ARM, r);
     arm.rotation.y = lerp(arm.rotation.y, 0, r);
     body.rotation.x = lerp(body.rotation.x, 0, r);
@@ -149,6 +177,7 @@ function poseAttack(rig, anim, t, A) {
   }
 }
 function poseBlock(rig, k) {
+  wrist(rig, -0.2, k);
   rig.armR.rotation.x = lerp(rig.armR.rotation.x, -1.55, k);
   rig.armR.rotation.y = lerp(rig.armR.rotation.y, -1.15, k);
   rig.armR.rotation.z = lerp(rig.armR.rotation.z, 0.5, k);
@@ -642,7 +671,7 @@ function updatePlayer(dt) {
 
   // Sword trail from the blade's base to its tip.
   rig.root.updateMatrixWorld(true);
-  const blade = rig.weapon.children[0];
+  const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined) ?? rig.weapon;
   _base.set(0, -0.3, 0); _tip.set(0, blade.userData.tipY ?? -1.5, 0);
   blade.localToWorld(_base); blade.localToWorld(_tip);
   updateTrail(_base, _tip, swinging, slashColor());
@@ -908,7 +937,7 @@ function updateEnemies(dt, playerSafe) {
       else if (!e.role && !e.summoned && e.deadT > 75 && dist > 80) respawnEnemy(e);
       continue;
     }
-    e.rig.root.visible = dist < 135;
+    e.rig.root.visible = dist < 85 + 25 * d.scale;
     if (dist > 120 && e.state === 'idle') { if (e.bar) e.bar.visible = false; continue; }
     activeList.push(e);
     if (e.role && !['idle', 'return'].includes(e.state)) engaged = e;
@@ -1073,16 +1102,19 @@ function updateEnemies(dt, playerSafe) {
     if (e.state === 'windup' || e.state === 'chargeWind') {
       const k = smooth(0, wind * 0.7, e.t);
       arm.rotation.set(lerp(REST_ARM, -2.9, k), 0, 0);
+      wrist(e.rig, lerp(e.rig.wristRest, -0.6, k), 0.5);
       e.rig.body.rotation.x = lerp(0, -0.15, k);
     } else if (e.state === 'throw') {
       arm.rotation.set(lerp(REST_ARM, -2.6, Math.min(1, e.t / 0.25)), 0.5, 0);
     } else if (e.state === 'strike') {
       const k = smooth(0, 0.1, e.t);
       arm.rotation.set(lerp(-2.9, -0.4, k), 0, 0);
+      e.rig.weapon.rotation.x = lerp(-0.6, -0.25, k);
       e.rig.body.rotation.x = lerp(-0.15, 0.25, k);
     } else if (e.state === 'slamWind') {
       const k = smooth(0, 0.5, e.t);
       arm.rotation.set(lerp(REST_ARM, -3.0, k), 0, 0);
+      wrist(e.rig, -0.5, 0.3);
       e.rig.armL.rotation.x = lerp(0, -3.0, k);
       e.rig.body.rotation.x = -0.2 * k;
     } else if (e.state === 'hurt') {
@@ -1090,6 +1122,7 @@ function updateEnemies(dt, playerSafe) {
     } else if (e.state === 'charge') {
       e.rig.body.rotation.x = 0.35;
       arm.rotation.set(-1.2, 0, 0);
+      wrist(e.rig, -0.3, 0.3);
     } else {
       restArm(e.rig, 0.12);
     }
@@ -1757,15 +1790,22 @@ function startGame(s) {
 spawnWorldEnemies();
 rebuildPlayerRig();
 placeAtTown(0);
+updateChunks(P.pos.x, P.pos.z);
 window.__game = {
   renderer, P, enemies, TOWNS, interactables, NINJA_BASES, DEMON_BASES, projectiles,
   get boss() { return boss; }, get ui() { return ui; }, get gfxHigh() { return gfxHigh; },
+  setCam(yaw, pitch, dist) { camYaw = yaw; camPitch = pitch; camDist = dist; },
 };
 
 const clock = new THREE.Clock();
+let frameNo = 0;
 function frame() {
   requestAnimationFrame(frame);
-  let dt = Math.min(0.05, clock.getDelta());
+  const rawDt = clock.getDelta();
+  let dt = Math.min(0.05, rawDt);
+  frameNo++;
+  tuneResolution(rawDt);
+  if (frameNo % 8 === 0) updateChunks(P.pos.x, P.pos.z);
   if (started && !ui) {
     if (hitstop > 0) { hitstop -= dt; dt *= 0.08; }
     else if (slowmo > 0) { slowmo -= dt; dt *= 0.35; }
@@ -1788,8 +1828,8 @@ function frame() {
   updateCamera(dt);
   updateFloaters(dt);
   if (started) {
-    updateHUD();
-    drawMap(mini, 180, 180, P.pos.x, P.pos.z, 0.9, false);
+    if (frameNo % 2 === 0) updateHUD();
+    if (frameNo % 4 === 0) drawMap(mini, 180, 180, P.pos.x, P.pos.z, 0.9, false);
   }
   if (gfxHigh) composer.render(); else renderer.render(scene, camera);
 }

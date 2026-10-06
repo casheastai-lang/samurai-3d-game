@@ -69,22 +69,72 @@ function mergeByMaterial(group) {
     group.add(merged);
   }
 }
+// Bake a static object's meshes into one mesh per material (relative to the root).
+// Subtrees marked userData.noMerge (animated parts) are left alone.
+export function mergeStatic(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const byMat = new Map();
+  const walk = o => {
+    for (const c of o.children) {
+      if (c.userData.noMerge) continue;
+      if (c.isMesh && !c.isInstancedMesh && c.children.length === 0) {
+        if (!byMat.has(c.material)) byMat.set(c.material, []);
+        byMat.get(c.material).push(c);
+      } else walk(c);
+    }
+  };
+  walk(root);
+  const rel = new THREE.Matrix4();
+  for (const [mat, list] of byMat) {
+    if (list.length < 2) continue;
+    const geos = list.map(m => {
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      g.applyMatrix4(rel.multiplyMatrices(inv, m.matrixWorld));
+      return g;
+    });
+    const total = geos.reduce((n, g) => n + g.attributes.position.count, 0);
+    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3), uv = new Float32Array(total * 2);
+    let o = 0;
+    for (const g of geos) {
+      pos.set(g.attributes.position.array, o * 3);
+      nor.set(g.attributes.normal.array, o * 3);
+      if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+      o += g.attributes.position.count;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const merged = new THREE.Mesh(geo, mat);
+    merged.castShadow = list.some(m => m.castShadow);
+    merged.receiveShadow = true;
+    for (const m of list) m.parent.remove(m);
+    root.add(merged);
+  }
+  return root;
+}
 function mergeRig(r) {
-  for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR]) mergeByMaterial(g);
+  for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR, r.weapon]) mergeByMaterial(g);
 }
 const fabric = () => ({ map: clothTex(), bumpMap: grainTex(), bumpScale: 0.5, roughness: 0.92 });
 
 export function makeKatana(o = {}) {
   const { color = 0xdfe6ee, glow = 0x000000, len = 1, style = 'katana' } = o;
   const g = new THREE.Group();
-  const handle = new THREE.MeshStandardMaterial({ color: 0x2a1a12, roughness: 0.9 });
+  const handle = new THREE.MeshStandardMaterial({ color: 0x1e1612, roughness: 0.75, bumpMap: grainTex(), bumpScale: 3 });
   const gold = new THREE.MeshStandardMaterial({ color: 0xb8902f, metalness: 0.7, roughness: 0.4 });
   const steel = new THREE.MeshStandardMaterial({
     color, metalness: 0.95, roughness: 0.12, emissive: glow, emissiveIntensity: glow ? 2.2 : 0,
   });
   const bl = 1.25 * len;
-  const h = new THREE.Mesh(new THREE.BoxGeometry(0.07, style === 'nodachi' ? 0.55 : 0.34, 0.07), handle);
-  h.position.y = style === 'nodachi' ? 0.12 : 0.02;
+  // The hand grips at y=0; the wrapped handle (tsuka) runs through the fist to a gold pommel.
+  const hl = style === 'nodachi' ? 0.55 : 0.36;
+  const h = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.036, hl, 12), handle);
+  h.position.y = hl / 2 - 0.15;
+  const pommel = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.034, 0.04, 12), gold);
+  pommel.position.y = hl - 0.13;
+  g.add(pommel);
   const tsuba = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, style === 'jagged' ? 4 : 24), gold);
   tsuba.position.y = -0.17;
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.035, bl, 0.1), steel);
@@ -120,8 +170,10 @@ function makeShortBlade() {
   const g = new THREE.Group();
   const steel = new THREE.MeshStandardMaterial({ color: 0x9a9fa5, metalness: 0.7, roughness: 0.4 });
   const wood = new THREE.MeshStandardMaterial({ color: 0x3b2a1a });
-  const h = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.26, 0.07), wood);
-  const b = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.85, 0.12), steel); b.position.y = -0.55;
+  const h = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.034, 0.28, 10), wood); h.position.y = 0.04;
+  const guard = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.025, 0.06), steel); guard.position.y = -0.11;
+  g.add(guard);
+  const b = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.85, 0.11), steel); b.position.y = -0.55;
   for (const m of [h, b]) { m.castShadow = true; g.add(m); }
   return g;
 }
@@ -168,38 +220,38 @@ export function makeHumanoid(o = {}) {
   const hairM = M(o.hair ?? 0x14100c, { roughness: 0.5 });
 
   // Kimono torso, rounded shoulders, white under-collar and an obi sash.
-  add(body, new THREE.CylinderGeometry(0.34, 0.29, 0.86, 24), cloth, 0, 0.47, 0).scale.z = 0.66;
-  add(body, new THREE.SphereGeometry(0.34, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), cloth, 0, 0.89, 0).scale.set(1, 0.35, 0.66);
+  add(body, new THREE.CylinderGeometry(0.34, 0.29, 0.86, 15), cloth, 0, 0.47, 0).scale.z = 0.66;
+  add(body, new THREE.SphereGeometry(0.34, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2), cloth, 0, 0.89, 0).scale.set(1, 0.35, 0.66);
   for (const sx of [-1, 1]) {
     const c = add(body, new THREE.BoxGeometry(0.07, 0.5, 0.02), under, sx * 0.075, 0.68, 0.215);
     c.rotation.z = sx * 0.38;
   }
-  add(body, new THREE.CylinderGeometry(0.315, 0.315, 0.16, 24), M(o.obi ?? 0x2a1a14, fabric()), 0, 0.08, 0).scale.z = 0.72;
-  add(body, new THREE.CylinderGeometry(0.31, 0.5, 0.44, 24), cloth2, 0, -0.13, 0).scale.z = 0.8;
-  add(body, new THREE.CylinderGeometry(0.075, 0.09, 0.16, 14), skin, 0, 0.96, 0);
+  add(body, new THREE.CylinderGeometry(0.315, 0.315, 0.16, 15), M(o.obi ?? 0x2a1a14, fabric()), 0, 0.08, 0).scale.z = 0.72;
+  add(body, new THREE.CylinderGeometry(0.31, 0.5, 0.44, 15), cloth2, 0, -0.13, 0).scale.z = 0.8;
+  add(body, new THREE.CylinderGeometry(0.075, 0.09, 0.16, 9), skin, 0, 0.96, 0);
 
   // Head with a face.
   const head = new THREE.Group(); head.position.set(0, 1.16, 0); body.add(head);
-  add(head, new THREE.SphereGeometry(0.235, 32, 24), skin, 0, 0, 0).scale.set(0.92, 1.08, 1);
-  add(head, new THREE.SphereGeometry(0.15, 24, 16), skin, 0, -0.1, 0.07).scale.set(1, 0.8, 1);
+  add(head, new THREE.SphereGeometry(0.235, 19, 14), skin, 0, 0, 0).scale.set(0.92, 1.08, 1);
+  add(head, new THREE.SphereGeometry(0.15, 14, 9), skin, 0, -0.1, 0.07).scale.set(1, 0.8, 1);
   add(head, new THREE.ConeGeometry(0.035, 0.09, 12), skin, 0, -0.02, 0.235).rotation.x = Math.PI / 2;
   const eyeWhite = M(0xf0ece4, { roughness: 0.25 }), pupil = M(0x140c08, { roughness: 0.15 });
   for (const sx of [-1, 1]) {
-    add(head, new THREE.SphereGeometry(0.05, 12, 10), skin, sx * 0.215, -0.01, 0).scale.set(0.45, 1, 0.8);
-    add(head, new THREE.SphereGeometry(0.03, 14, 10), eyeWhite, sx * 0.083, 0.03, 0.197).scale.z = 0.5;
-    add(head, new THREE.SphereGeometry(0.017, 12, 8), pupil, sx * 0.083, 0.03, 0.211);
+    add(head, new THREE.SphereGeometry(0.05, 8, 6), skin, sx * 0.215, -0.01, 0).scale.set(0.45, 1, 0.8);
+    add(head, new THREE.SphereGeometry(0.03, 8, 6), eyeWhite, sx * 0.083, 0.03, 0.197).scale.z = 0.5;
+    add(head, new THREE.SphereGeometry(0.017, 8, 6), pupil, sx * 0.083, 0.03, 0.211);
     add(head, new THREE.BoxGeometry(0.085, 0.018, 0.02), hairM, sx * 0.085, 0.085, 0.208).rotation.z = sx * -0.15;
   }
   const hair = () => {
-    add(head, new THREE.SphereGeometry(0.245, 28, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM, 0, 0.02, -0.02).scale.set(0.95, 1.08, 1.02);
+    add(head, new THREE.SphereGeometry(0.245, 17, 7, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM, 0, 0.02, -0.02).scale.set(0.95, 1.08, 1.02);
     add(head, new THREE.CapsuleGeometry(0.045, 0.14, 6, 10), hairM, 0, 0.26, -0.04).rotation.x = Math.PI / 2 - 0.3;
   };
 
   if (o.armor) {
     const lac = M(o.armor, { roughness: 0.32, metalness: 0.2, bumpMap: grainTex(), bumpScale: 0.3 });
     const cord = M(0xc9a24a, { roughness: 0.6 });
-    add(body, new THREE.CylinderGeometry(0.37, 0.33, 0.52, 24), lac, 0, 0.56, 0).scale.z = 0.72;
-    for (let i = 0; i < 4; i++) add(body, new THREE.CylinderGeometry(0.372, 0.372, 0.015, 24), cord, 0, 0.36 + i * 0.13, 0).scale.z = 0.725;
+    add(body, new THREE.CylinderGeometry(0.37, 0.33, 0.52, 15), lac, 0, 0.56, 0).scale.z = 0.72;
+    for (let i = 0; i < 4; i++) add(body, new THREE.CylinderGeometry(0.372, 0.372, 0.015, 15), cord, 0, 0.36 + i * 0.13, 0).scale.z = 0.725;
     for (const sx of [-1, 1]) {
       const sode = add(body, new THREE.BoxGeometry(0.3, 0.34, 0.36), lac, sx * 0.5, 0.72, 0);
       sode.rotation.z = sx * 0.28;
@@ -220,39 +272,39 @@ export function makeHumanoid(o = {}) {
     add(head, new THREE.TorusGeometry(0.235, 0.03, 8, 28), M(o.bandColor ?? 0x7a1b1b, fabric()), 0, 0.1, 0).rotation.x = Math.PI / 2;
   } else if (o.hat === 'bun') {
     hair();
-    add(head, new THREE.SphereGeometry(0.1, 14, 10), hairM, 0, 0.2, -0.16);
+    add(head, new THREE.SphereGeometry(0.1, 8, 6), hairM, 0, 0.2, -0.16);
   } else if (o.hat === 'kabuto') {
     const helm = M(o.armor ?? 0x2a2420, { metalness: 0.45, roughness: 0.35 });
     const gold = M(0xd4a72c, { metalness: 0.9, roughness: 0.25 });
-    add(head, new THREE.SphereGeometry(0.29, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), helm, 0, 0.04, 0);
+    add(head, new THREE.SphereGeometry(0.29, 17, 7, 0, Math.PI * 2, 0, Math.PI / 2), helm, 0, 0.04, 0);
     for (let i = 0; i < 3; i++) {
-      const ring = add(head, new THREE.CylinderGeometry(0.31 + i * 0.05, 0.35 + i * 0.05, 0.08, 28, 1, true), helm, 0, -0.02 - i * 0.07, -0.05);
+      const ring = add(head, new THREE.CylinderGeometry(0.31 + i * 0.05, 0.35 + i * 0.05, 0.08, 18, 1, true), helm, 0, -0.02 - i * 0.07, -0.05);
       ring.material.side = THREE.DoubleSide;
     }
     for (const sx of [-1, 1]) {
       const horn = add(head, new THREE.BoxGeometry(0.04, 0.44, 0.02), gold, sx * 0.14, 0.42, 0.2);
       horn.rotation.z = sx * -0.45;
     }
-    add(head, new THREE.SphereGeometry(0.05, 12, 8), gold, 0, 0.2, 0.27);
+    add(head, new THREE.SphereGeometry(0.05, 8, 6), gold, 0, 0.2, 0.27);
   } else if (o.hat === 'ninja') {
     const hood = M(o.cloth ?? 0x1b1b21, fabric());
-    add(head, new THREE.SphereGeometry(0.255, 28, 20), hood, 0, 0.0, -0.01).scale.set(0.95, 1.1, 1.02);
-    add(head, new THREE.CylinderGeometry(0.2, 0.17, 0.2, 20), hood, 0, -0.14, 0.03);
+    add(head, new THREE.SphereGeometry(0.255, 17, 12), hood, 0, 0.0, -0.01).scale.set(0.95, 1.1, 1.02);
+    add(head, new THREE.CylinderGeometry(0.2, 0.17, 0.2, 13), hood, 0, -0.14, 0.03);
     const tail = add(head, new THREE.BoxGeometry(0.06, 0.38, 0.02), M(o.scarf ?? 0x8a1010, fabric()), 0.08, 0.0, -0.28);
     tail.rotation.x = 0.45;
   } else if (o.hat === 'onimask') {
     hair();
     const red = M(0xb0201a, { roughness: 0.3, metalness: 0.1 }), bone = M(0xeee3c8, { roughness: 0.4 });
-    add(head, new THREE.SphereGeometry(0.22, 24, 16, -Math.PI / 2, Math.PI, 0, Math.PI), red, 0, -0.01, 0.06).scale.set(1, 1.08, 0.9);
+    add(head, new THREE.SphereGeometry(0.22, 14, 9, -Math.PI / 2, Math.PI, 0, Math.PI), red, 0, -0.01, 0.06).scale.set(1, 1.08, 0.9);
     for (const sx of [-1, 1]) {
       const horn = add(head, new THREE.ConeGeometry(0.045, 0.32, 12), bone, sx * 0.15, 0.3, 0.12);
       horn.rotation.z = sx * -0.35;
-      add(head, new THREE.SphereGeometry(0.03, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd23a }), sx * 0.083, 0.03, 0.25);
+      add(head, new THREE.SphereGeometry(0.03, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffd23a }), sx * 0.083, 0.03, 0.25);
     }
-    add(head, new THREE.SphereGeometry(0.28, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), M(0xe8e8e8, { roughness: 0.9 }), 0, 0.06, -0.06);
+    add(head, new THREE.SphereGeometry(0.28, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), M(0xe8e8e8, { roughness: 0.9 }), 0, 0.06, -0.06);
   } else if (o.hat === 'elder') {
     const white = M(0xdddddd, { roughness: 0.9 });
-    add(head, new THREE.SphereGeometry(0.245, 24, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), white, 0, 0.02, -0.03);
+    add(head, new THREE.SphereGeometry(0.245, 14, 6, 0, Math.PI * 2, 0, Math.PI * 0.5), white, 0, 0.02, -0.03);
     add(head, new THREE.ConeGeometry(0.1, 0.32, 12), white, 0, -0.28, 0.18).rotation.x = Math.PI;
   } else hair();
   if (o.scarf) {
@@ -265,7 +317,7 @@ export function makeHumanoid(o = {}) {
   const legL = new THREE.Group(); legL.position.set(-0.19, -0.15, 0); body.add(legL);
   const legR = new THREE.Group(); legR.position.set(0.19, -0.15, 0); body.add(legR);
   for (const leg of [legL, legR]) {
-    add(leg, new THREE.CylinderGeometry(0.17, 0.23, 0.74, 18), cloth2, 0, -0.37, 0);
+    add(leg, new THREE.CylinderGeometry(0.17, 0.23, 0.74, 11), cloth2, 0, -0.37, 0);
     add(leg, new THREE.CapsuleGeometry(0.075, 0.14, 6, 12), tabi, 0, -0.8, 0.05).rotation.x = Math.PI / 2;
     add(leg, new THREE.BoxGeometry(0.15, 0.03, 0.32), dark, 0, -0.865, 0.05);
   }
@@ -274,19 +326,36 @@ export function makeHumanoid(o = {}) {
   const armR = new THREE.Group(); armR.position.set(0.46, 0.82, 0); body.add(armR);
   armR.rotation.order = 'YXZ';
   for (const arm of [armL, armR]) {
-    add(arm, new THREE.SphereGeometry(0.13, 16, 12), cloth, 0, 0, 0);
-    add(arm, new THREE.CylinderGeometry(0.12, 0.2, 0.5, 18), cloth, 0, -0.26, 0);
+    add(arm, new THREE.SphereGeometry(0.13, 9, 7), cloth, 0, 0, 0);
+    add(arm, new THREE.CylinderGeometry(0.12, 0.2, 0.5, 11), cloth, 0, -0.26, 0);
     add(arm, new THREE.CylinderGeometry(0.055, 0.048, 0.2, 12), skin, 0, -0.56, 0);
-    add(arm, new THREE.SphereGeometry(0.068, 14, 10), skin, 0, -0.68, 0).scale.set(0.9, 1.1, 1.1);
+    if (arm === armL || !o.weapon) add(arm, new THREE.SphereGeometry(0.068, 8, 6), skin, 0, -0.68, 0).scale.set(0.9, 1.1, 1.1);
   }
 
+  // The wrist: the weapon pivots here, so the blade can point away from the forearm
+  // instead of continuing it. The fist rides on the wrist, wrapped around the handle.
   const weapon = new THREE.Group(); weapon.position.y = -0.68; armR.add(weapon);
+  if (o.weapon) {
+    const fist = new THREE.Mesh(new THREE.SphereGeometry(0.072, 8, 6), skin);
+    fist.scale.set(1.15, 0.9, 1.25);
+    fist.position.set(0, 0.0, 0);
+    fist.castShadow = true;
+    weapon.add(fist);
+    for (let k = 0; k < 4; k++) {
+      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.024, 8, 6), skin);
+      knuckle.position.set(0.055, 0.045 - k * 0.03, 0.035);
+      weapon.add(knuckle);
+    }
+  }
   if (o.weapon === 'katana') weapon.add(makeKatana(o.blade));
   else if (o.weapon === 'blade') weapon.add(makeShortBlade());
   else if (o.weapon === 'staff') weapon.add(makeStaff());
+  // Guard stance: blade angled up and forward from the fist.
+  const wristRest = o.weapon === 'katana' || o.weapon === 'blade' ? -1.3 : 0;
+  weapon.rotation.x = wristRest;
 
   root.scale.setScalar(o.scale ?? 1);
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest };
   mergeRig(rig);
   return rig;
 }
@@ -303,22 +372,22 @@ export function makeOni(o = {}) {
   const bone = M(o.horn ?? 0xeee3c8, { roughness: 0.35 });
   const gold = M(0xb8902f, { metalness: 0.85, roughness: 0.3 });
 
-  add(body, new THREE.SphereGeometry(0.62, 32, 24), skin, 0, 0.62, 0).scale.set(1, 0.95, 0.68);
-  for (const sx of [-1, 1]) add(body, new THREE.SphereGeometry(0.3, 24, 16), skin, sx * 0.23, 0.8, 0.22).scale.set(1, 0.75, 0.55);
-  add(body, new THREE.SphereGeometry(0.44, 28, 20), skin, 0, 0.28, 0.14).scale.set(1, 0.9, 0.85);
-  add(body, new THREE.CylinderGeometry(0.56, 0.64, 0.44, 32), tiger, 0, -0.05, 0).scale.z = 0.8;
+  add(body, new THREE.SphereGeometry(0.62, 19, 14), skin, 0, 0.62, 0).scale.set(1, 0.95, 0.68);
+  for (const sx of [-1, 1]) add(body, new THREE.SphereGeometry(0.3, 14, 9), skin, sx * 0.23, 0.8, 0.22).scale.set(1, 0.75, 0.55);
+  add(body, new THREE.SphereGeometry(0.44, 17, 12), skin, 0, 0.28, 0.14).scale.set(1, 0.9, 0.85);
+  add(body, new THREE.CylinderGeometry(0.56, 0.64, 0.44, 20), tiger, 0, -0.05, 0).scale.z = 0.8;
   add(body, new THREE.TorusGeometry(0.57, 0.05, 10, 32), M(0x3a2618, fabric()), 0, 0.17, 0).rotation.x = Math.PI / 2;
-  add(body, new THREE.CylinderGeometry(0.24, 0.32, 0.3, 20), skin, 0, 1.12, 0.02);
+  add(body, new THREE.CylinderGeometry(0.24, 0.32, 0.3, 13), skin, 0, 1.12, 0.02);
 
   const head = new THREE.Group(); head.position.set(0, 1.36, 0.08); body.add(head);
-  add(head, new THREE.SphereGeometry(0.32, 32, 24), skin, 0, 0.02, 0).scale.set(1, 1.04, 0.95);
-  add(head, new THREE.SphereGeometry(0.25, 28, 18), skin, 0, -0.15, 0.08).scale.set(1.15, 0.75, 1);
+  add(head, new THREE.SphereGeometry(0.32, 19, 14), skin, 0, 0.02, 0).scale.set(1, 1.04, 0.95);
+  add(head, new THREE.SphereGeometry(0.25, 17, 11), skin, 0, -0.15, 0.08).scale.set(1.15, 0.75, 1);
   add(head, new THREE.CapsuleGeometry(0.06, 0.4, 6, 12), skin, 0, 0.11, 0.25).rotation.z = Math.PI / 2;
-  add(head, new THREE.SphereGeometry(0.075, 14, 10), skin, 0, -0.01, 0.31).scale.set(1.2, 0.9, 1);
+  add(head, new THREE.SphereGeometry(0.075, 8, 6), skin, 0, -0.01, 0.31).scale.set(1.2, 0.9, 1);
   add(head, new THREE.BoxGeometry(0.3, 0.05, 0.05), M(0x200808, { roughness: 0.4 }), 0, -0.19, 0.29);
   const eyeM = new THREE.MeshBasicMaterial({ color: o.eyes ?? 0xffe14a });
   for (const sx of [-1, 1]) {
-    add(head, new THREE.SphereGeometry(0.05, 14, 10), eyeM, sx * 0.13, 0.04, 0.27).scale.set(1.3, 0.8, 0.6);
+    add(head, new THREE.SphereGeometry(0.05, 8, 6), eyeM, sx * 0.13, 0.04, 0.27).scale.set(1.3, 0.8, 0.6);
     const f = add(head, new THREE.ConeGeometry(0.035, 0.13, 10), bone, sx * 0.12, -0.13, 0.3);
     f.rotation.x = Math.PI * 0.95;
     const horn = add(head, new THREE.ConeGeometry(0.075, 0.48, 16, 4), bone, sx * 0.2, 0.42, -0.02);
@@ -337,28 +406,36 @@ export function makeOni(o = {}) {
   for (const leg of [legL, legR]) {
     add(leg, new THREE.CapsuleGeometry(0.2, 0.32, 8, 16), skin, 0, -0.25, 0);
     add(leg, new THREE.CapsuleGeometry(0.16, 0.28, 8, 16), skin, 0, -0.56, 0.02);
-    add(leg, new THREE.CylinderGeometry(0.18, 0.18, 0.08, 18), gold, 0, -0.66, 0.02);
-    add(leg, new THREE.SphereGeometry(0.17, 18, 12), skin, 0, -0.78, 0.1).scale.set(1, 0.45, 1.5);
+    add(leg, new THREE.CylinderGeometry(0.18, 0.18, 0.08, 11), gold, 0, -0.66, 0.02);
+    add(leg, new THREE.SphereGeometry(0.17, 11, 7), skin, 0, -0.78, 0.1).scale.set(1, 0.45, 1.5);
   }
   const armL = new THREE.Group(); armL.position.set(-0.74, 0.92, 0); body.add(armL);
   const armR = new THREE.Group(); armR.position.set(0.74, 0.92, 0); body.add(armR);
   armR.rotation.order = 'YXZ';
   for (const arm of [armL, armR]) {
-    add(arm, new THREE.SphereGeometry(0.25, 22, 16), skin, 0, 0, 0);
+    add(arm, new THREE.SphereGeometry(0.25, 13, 9), skin, 0, 0, 0);
     add(arm, new THREE.CapsuleGeometry(0.16, 0.34, 8, 16), skin, 0, -0.3, 0);
-    add(arm, new THREE.CylinderGeometry(0.16, 0.15, 0.16, 20), gold, 0, -0.6, 0);
-    add(arm, new THREE.SphereGeometry(0.17, 18, 14), skin, 0, -0.8, 0);
+    add(arm, new THREE.CylinderGeometry(0.16, 0.15, 0.16, 13), gold, 0, -0.6, 0);
+    if (arm === armL) add(arm, new THREE.SphereGeometry(0.17, 11, 8), skin, 0, -0.8, 0);
   }
-  const weapon = new THREE.Group(); weapon.position.y = -0.82; armR.add(weapon);
-  weapon.add(makeClub(o.clubLen ?? 1));
+  const weapon = new THREE.Group(); weapon.position.y = -0.8; armR.add(weapon);
+  const fist = new THREE.Mesh(new THREE.SphereGeometry(0.17, 11, 8), skin);
+  fist.scale.set(1.1, 0.95, 1.2);
+  fist.castShadow = true;
+  weapon.add(fist);
+  const club = makeClub(o.clubLen ?? 1);
+  club.position.y = 0.12;
+  weapon.add(club);
+  const wristRest = -0.75;
+  weapon.rotation.x = wristRest;
 
   if (o.cape) {
-    const cape = add(body, new THREE.CylinderGeometry(0.62, 0.9, 1.5, 24, 1, true, Math.PI * 0.6, Math.PI * 0.8), M(o.cape, { ...fabric(), side: THREE.DoubleSide }), 0, 0.3, -0.05);
+    const cape = add(body, new THREE.CylinderGeometry(0.62, 0.9, 1.5, 15, 1, true, Math.PI * 0.6, Math.PI * 0.8), M(o.cape, { ...fabric(), side: THREE.DoubleSide }), 0, 0.3, -0.05);
     cape.rotation.y = Math.PI;
   }
 
   root.scale.setScalar(o.scale ?? 1);
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest };
   mergeRig(rig);
   return rig;
 }

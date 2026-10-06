@@ -73,7 +73,7 @@ function spawnSlash(kind, color, delay, follow, life = 0.2, scale = 1) {
       m.rotation.y = p.facing;
       if (t < 0) return;
       const k = t / this.life;
-      mat.opacity = 0.85 * (1 - k);
+      mat.opacity = 0.4 * (1 - k);
       m.scale.setScalar((0.85 + k * 0.3) * scale);
     },
     dispose() { scene.remove(m); mat.dispose(); },

@@ -6,7 +6,7 @@ import {
 } from './data.js';
 import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
-  makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat,
+  makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat, mergeStatic,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
@@ -297,17 +297,9 @@ function buildVegetation() {
   }
 
   const inst = (geo, mat, list, shadow = true, tint = null) => {
-    if (!list.length) return;
-    const im = new THREE.InstancedMesh(geo, mat, list.length);
-    const col = new THREE.Color();
-    list.forEach((m, i) => {
-      im.setMatrixAt(i, m);
-      if (tint) { tint(col, i); im.setColorAt(i, col); }
-    });
-    im.castShadow = shadow;
-    im.receiveShadow = true;
-    scene.add(im);
+    if (list.length) chunkedInstances(geo, mat, list, { cell: 96, range: 240, shadow, tint });
   };
+
   const vary = (base, amt) => (c, i) => {
     const r = Math.sin(i * 12.9898) * 43758.5453;
     const f = r - Math.floor(r);
@@ -392,6 +384,40 @@ function lumpy(geo, amount, seed) {
   return geo;
 }
 
+// ============================================================ Chunked instancing
+// Vegetation is split into map tiles. Each tile is its own InstancedMesh with a tight
+// bounding sphere, so off-screen tiles are culled and far tiles are hidden entirely.
+const chunks = [];
+let grassEnabled = true;
+function chunkedInstances(geo, mat, list, { cell, range, shadow = true, tint = null, grass = false }) {
+  const groups = new Map();
+  list.forEach((m, i) => {
+    const k = Math.floor(m.elements[12] / cell) + ',' + Math.floor(m.elements[14] / cell);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push([m, i]);
+  });
+  const col = new THREE.Color();
+  for (const [k, arr] of groups) {
+    const im = new THREE.InstancedMesh(geo, mat, arr.length);
+    arr.forEach(([m, i], j) => {
+      im.setMatrixAt(j, m);
+      if (tint) { tint(col, i); im.setColorAt(j, col); }
+    });
+    im.castShadow = shadow;
+    im.receiveShadow = true;
+    im.computeBoundingSphere();
+    const [cx, cz] = k.split(',').map(Number);
+    chunks.push({ mesh: im, x: (cx + 0.5) * cell, z: (cz + 0.5) * cell, range: range + cell * 0.71, grass });
+    scene.add(im);
+  }
+}
+function updateChunks(px, pz) {
+  for (const c of chunks) {
+    c.mesh.visible = (!c.grass || grassEnabled) && Math.hypot(c.x - px, c.z - pz) < c.range;
+  }
+}
+function setGrassEnabled(on) { grassEnabled = on; }
+
 // ============================================================ Lakes
 const waterMats = [];
 function buildLakes() {
@@ -448,11 +474,12 @@ const staticNPCs = [];
 
 const VILLAGER_COLORS = [0x8a3b3b, 0x3b6a8a, 0x6a8a3b, 0x8a6a3b, 0x5b3b8a, 0x9a7a5a, 0x3b8a7a];
 
-function placeObj(obj, x, z, ry) {
+function placeObj(obj, x, z, ry, merge = true) {
   obj.position.set(x, height(x, z), z);
   obj.rotation.y = ry;
   scene.add(obj);
   obj.updateMatrixWorld(true);
+  if (merge && !obj.userData.noMerge) mergeStatic(obj);
   return obj;
 }
 const facing = (fx, fz, tx, tz) => Math.atan2(tx - fx, tz - fz);
@@ -488,7 +515,7 @@ function buildTown(t) {
   // Village elder.
   const ex = t.x + dx * 6 + px * 4, ez = t.z + dz * 6 + pz * 4;
   const elder = makeHumanoid({ cloth: 0x6b5a7a, cloth2: 0x4a3f55, hat: 'elder', weapon: 'staff', skin: 0xd6a37e });
-  placeObj(elder.root, ex, ez, facing(ex, ez, t.x, t.z));
+  placeObj(elder.root, ex, ez, facing(ex, ez, t.x, t.z), false);
   elder.armR.rotation.x = -0.4;
   staticNPCs.push(elder);
   addCollider(ex, ez, 0.5);
@@ -607,7 +634,7 @@ function buildGrass() {
   for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
   const mats = [];
   const dummy = new THREE.Object3D();
-  for (let i = 0; i < 200000 && mats.length < 60000; i++) {
+  for (let i = 0; i < 360000 && mats.length < 110000; i++) {
     const x = wr(BOUNDS.minX, BOUNDS.maxX), z = wr(-760, BOUNDS.maxZ);
     if (roadDist(x, z) < 3.5 || townDist(x, z) < TOWN_R - 3 || ninjaDist(x, z) < NINJA_R || arenaDist(x, z) < ARENA.r + 4 || lakeDist(x, z) < 0) continue;
     const h = height(x, z);
@@ -621,16 +648,10 @@ function buildGrass() {
   }
   const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   addWind(grassMat, 0.5, 0.6);
-  const im = new THREE.InstancedMesh(blade, grassMat, mats.length);
-  const gc = new THREE.Color();
-  mats.forEach((m, i) => {
-    im.setMatrixAt(i, m);
-    gc.setHSL(0.2 + Math.random() * 0.07, 0.35 + Math.random() * 0.2, 0.5 + Math.random() * 0.15);
-    im.setColorAt(i, gc);
+  chunkedInstances(blade, grassMat, mats, {
+    cell: 32, range: 60, shadow: false, grass: true,
+    tint: c => c.setHSL(0.2 + Math.random() * 0.07, 0.35 + Math.random() * 0.2, 0.5 + Math.random() * 0.15),
   });
-  im.receiveShadow = true;
-  im.name = 'grass';
-  scene.add(im);
 }
 
 // ============================================================ Sky, clouds, mountain
@@ -791,7 +812,7 @@ function buildNinjaBase(nb, tier) {
   // The sealed portal at the back of the camp.
   const portal = makePortal([0x9a3aff, 0xff3a3a, 0xff8a1a, 0x3affc0][tier]);
   const [ptx, ptz] = at(-9, 0);
-  placeObj(portal.group, ptx, ptz, gateA);
+  placeObj(portal.group, ptx, ptz, gateA, false);
   addCollider(...at(-9, 2.6), 0.8);
   addCollider(...at(-9, -2.6), 0.8);
   portal.setOpen(false);
@@ -893,7 +914,9 @@ function buildDemonBase(db, tier) {
     const a = (k / 9) * Math.PI * 2 + 0.3, r = k % 2 ? 14 : 24;
     db.spots.push([db.x + Math.cos(a) * r, db.z + Math.sin(a) * r * 0.8 - 2]);
   }
-  g.traverse(o => { if (o.isMesh) o.updateMatrixWorld(); });
+  portal.group.userData.noMerge = true;
+  chest.userData.noMerge = true;
+  mergeStatic(g);
 }
 
 function buildWorld(sc) {
@@ -910,6 +933,6 @@ function buildWorld(sc) {
 }
 
 export {
-  buildWorld, updateSky, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, ninjaPortals, segDist,
 };
