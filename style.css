@@ -182,3 +182,27 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
   #hint { display: none; }
   #bannerTitle { font-size: 30px; }
 }
+
+/* ---------- Boss talk ---------- */
+#modal.talkmode { align-items: flex-end; background: linear-gradient(transparent 45%, rgba(0, 0, 0, 0.65)); }
+#modal.talkmode #modalBox { width: min(760px, calc(100vw - 32px)); margin-bottom: 40px; }
+.talk .speaker { font-size: 22px; font-weight: 800; color: #ffb3a8; letter-spacing: 1px; margin-bottom: 6px; }
+.talk p { font-size: 17px; margin: 6px 0; }
+.choices { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.choices button { text-align: left; font-size: 16px; padding: 10px 14px; }
+.choices button span { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+
+/* ---------- Character creator ---------- */
+#modal.side { justify-content: flex-start; background: linear-gradient(90deg, rgba(0, 0, 0, 0.6), transparent 60%); }
+#modal.side #modalBox { width: min(430px, calc(100vw - 32px)); margin-left: 24px; }
+.crow { display: flex; align-items: center; gap: 12px; margin: 10px 0; }
+.clabel { width: 76px; flex-shrink: 0; font-weight: 700; color: var(--muted); font-size: 14px; }
+.swatches, .hats { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.sw { width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); }
+.sw.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(232, 193, 90, 0.5); }
+.hatbtn { font-size: 13px; padding: 6px 10px; background: #2a2420; border-color: var(--edge); }
+.hatbtn.on { background: #6e1d16; border-color: #c0392b; }
+@media (max-width: 720px) {
+  #modal.side { justify-content: center; align-items: flex-end; }
+  #modal.side #modalBox { margin: 0 0 16px; max-height: 60vh; }
+}

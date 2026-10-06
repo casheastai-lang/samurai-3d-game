@@ -50,6 +50,15 @@ Each region has a walled ninja base off the road. Ninjas are fast, dodge your at
 Defeat the base's **ninja master** to break the seal on its portal. The portal leads to a **demon fortress** on a lava island.
 Each fortress has a warlord who guards a chest. The chests hold four swords you can't buy: Shadowfang, Blood Moon, Celestial Blade and Yamata Dragonblade.
 
+### Your samurai and the bosses
+
+A new journey opens the character creator: skin tone, hair, robe, hakama, scarf and headwear. Open it again anytime from the inventory (I).
+
+Before each boss fight (ninja masters, demon warlords and the Demon King) the boss speaks first and you pick a reply:
+- **Bow**: start the duel with a full Ki bar.
+- **Taunt**: the boss hits 25% harder, takes 25% more damage and drops 60% more gold.
+- **Ask how they fight**: hear a hint about their moves, then choose again.
+
 ### Rules
 
 - **Towns are safe.** Demons won't follow you inside.

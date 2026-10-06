@@ -144,10 +144,11 @@ const trail = (() => {
   return { mesh, pos, col, geo, samples: [], color: new THREE.Color() };
 })();
 // Call each frame with world positions of blade base and tip, and whether the sword is swinging.
-export function updateTrail(base, tip, active, color) {
+export function updateTrail(base, tip, active, color, dt = 1 / 60) {
   trail.color.set(color);
   if (active) trail.samples.unshift({ b: base.clone(), t: tip.clone(), a: 1 });
-  for (const s of trail.samples) s.a -= active ? 0.07 : 0.25;
+  // Fade by time, not frames, so the trail looks the same at any frame rate.
+  for (const s of trail.samples) s.a -= dt * (active ? 5 : 12);
   while (trail.samples.length > TRAIL_N || (trail.samples.length && trail.samples[trail.samples.length - 1].a <= 0)) trail.samples.pop();
   const n = trail.samples.length;
   for (let i = 0; i < TRAIL_N; i++) {
@@ -157,8 +158,9 @@ export function updateTrail(base, tip, active, color) {
     trail.pos[k] = s.b.x; trail.pos[k + 1] = s.b.y; trail.pos[k + 2] = s.b.z;
     trail.pos[k + 3] = s.t.x; trail.pos[k + 4] = s.t.y; trail.pos[k + 5] = s.t.z;
     const f = i < n ? Math.max(0, s.a) * (1 - i / TRAIL_N) : 0;
-    trail.col[k] = trail.color.r * f * 0.25; trail.col[k + 1] = trail.color.g * f * 0.25; trail.col[k + 2] = trail.color.b * f * 0.25;
-    trail.col[k + 3] = trail.color.r * f; trail.col[k + 4] = trail.color.g * f; trail.col[k + 5] = trail.color.b * f;
+    const f2 = f * 0.7;
+    trail.col[k] = 0; trail.col[k + 1] = 0; trail.col[k + 2] = 0;
+    trail.col[k + 3] = trail.color.r * f2; trail.col[k + 4] = trail.color.g * f2; trail.col[k + 5] = trail.color.b * f2;
   }
   trail.geo.attributes.position.needsUpdate = true;
   trail.geo.attributes.color.needsUpdate = true;
@@ -229,3 +231,114 @@ export function updateAmbient(dt, center, mode, time) {
 }
 
 export { burst, updateParticles, spawnSlash, spawnRing, updateEffects, floatText, updateFloaters, effects };
+
+// ---------- Sweeping slash streaks ----------
+// A crescent strip whose texture is brightest at the leading edge and fades toward the
+// tail and the inner rim. It rotates through the swing while fading, so it reads as the
+// motion smear of a blade rather than a static shape.
+const arcCache = new Map();
+function arcGeometry(arc) {
+  if (arcCache.has(arc)) return arcCache.get(arc);
+  const seg = 40, pos = [], uv = [], idx = [];
+  for (let i = 0; i <= seg; i++) {
+    const u = i / seg, a = -arc / 2 + arc * u;
+    for (const [r, v] of [[0.45, 0], [1, 1]]) {
+      pos.push(Math.sin(a) * r, 0, Math.cos(a) * r);
+      uv.push(u, v);
+    }
+    if (i < seg) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  arcCache.set(arc, g);
+  return g;
+}
+let smearTex = null;
+function smearTexture() {
+  if (smearTex) return smearTex;
+  const W = 256, H = 64, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d'), img = ctx.createImageData(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const u = x / (W - 1), v = 1 - y / (H - 1);
+    const along = Math.pow(u, 1.8) * (1 - Math.pow(Math.max(0, u - 0.94) / 0.06, 2));
+    const edge = Math.exp(-Math.pow((v - 0.86) / 0.07, 2)) + Math.pow(v, 3) * 0.35;
+    const streak = 0.85 + 0.15 * Math.sin(v * 60 + u * 9);
+    const a = Math.max(0, Math.min(1, along * edge * streak));
+    const i = (y * W + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = 255 * a; img.data[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  smearTex = new THREE.CanvasTexture(c);
+  return smearTex;
+}
+// follow() -> {x, y, z, facing}. plane: 'h' horizontal, 'v' vertical, or a tilt angle.
+// dir: +1 / -1 sweep direction. radius in metres, arc and sweep in radians.
+export function spawnSwing({ follow, plane = 'h', dir = 1, color = 0xffffff, radius = 2.6, arc = 2.4, sweep = 1.2, life = 0.2, delay = 0, height: hy = 1.25, intensity = 1 }) {
+  const mat = new THREE.MeshBasicMaterial({ map: smearTexture(), color, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+  const outer = new THREE.Group(), tilt = new THREE.Group();
+  const m = new THREE.Mesh(arcGeometry(arc), mat);
+  tilt.rotation.z = plane === 'h' ? 0 : plane === 'v' ? Math.PI / 2 : plane;
+  m.scale.set(dir * radius, 1, radius);
+  tilt.add(m); outer.add(tilt);
+  scene.add(outer);
+  effects.push({
+    t: -delay, life,
+    update(t) {
+      const p = follow();
+      outer.position.set(p.x, p.y + hy, p.z);
+      outer.rotation.y = p.facing;
+      if (t < 0) return;
+      const k = t / this.life;
+      m.rotation.y = dir * (-sweep / 2 + sweep * Math.min(1, k * 1.6));
+      mat.opacity = intensity * (k < 0.25 ? k / 0.25 : 1 - (k - 0.25) / 0.75);
+    },
+    dispose() { scene.remove(outer); mat.dispose(); },
+  });
+}
+
+// ---------- Impact flash ----------
+let starTex = null;
+function starTexture() {
+  if (starTex) return starTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 6; i++) {
+    const a = i * Math.PI / 3 + 0.3;
+    ctx.beginPath(); ctx.moveTo(32, 32); ctx.lineTo(32 + Math.cos(a) * 31, 32 + Math.sin(a) * 31); ctx.stroke();
+  }
+  starTex = new THREE.CanvasTexture(c);
+  return starTex;
+}
+// A bright starburst at the point of contact, plus sparks and blood (or demon ichor).
+export function spawnImpact(x, y, z, { color = 0xfff0c0, size = 1.4, blood = null, dx = 0, dz = 0 } = {}) {
+  const mat = new THREE.SpriteMaterial({ map: starTexture(), color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const sp = new THREE.Sprite(mat);
+  sp.position.set(x, y, z);
+  sp.material.rotation = Math.random() * Math.PI;
+  scene.add(sp);
+  effects.push({
+    t: 0, life: 0.14,
+    update(t) { const k = t / 0.14; sp.scale.setScalar(size * (0.4 + k)); mat.opacity = 1 - k; },
+    dispose() { scene.remove(sp); mat.dispose(); },
+  });
+  burst(x, y, z, 10, color, 7, 3, 0.25, 14);
+  if (blood !== null) {
+    // Spray mostly away from the attacker.
+    for (let i = 0; i < 18; i++) {
+      const k = pNext; pNext = (pNext + 1) % PMAX;
+      tmpColor.set(blood);
+      pPos[k * 3] = x; pPos[k * 3 + 1] = y; pPos[k * 3 + 2] = z;
+      pVel[k * 3] = dx * rand(2, 6) + rand(-1.5, 1.5); pVel[k * 3 + 1] = rand(0.5, 4); pVel[k * 3 + 2] = dz * rand(2, 6) + rand(-1.5, 1.5);
+      pBase[k * 3] = tmpColor.r; pBase[k * 3 + 1] = tmpColor.g; pBase[k * 3 + 2] = tmpColor.b;
+      pLife[k] = pMax[k] = rand(0.4, 0.8);
+      pGrav[k] = 16;
+    }
+  }
+}

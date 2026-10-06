@@ -7,17 +7,17 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   PATH, TOWN_IDX, TOWN_R, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
-  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R,
+  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK,
 } from './data.js';
-import { makeHumanoid, makeEnemyModel, makeShuriken } from './models.js';
+import { makeHumanoid, makeEnemyModel, makeShuriken, setLod } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
   buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
-  initFx, burst, updateParticles, spawnSlash, spawnRing, updateEffects, floatText, updateFloaters,
-  updateTrail, spawnBolt, updateAmbient,
+  initFx, burst, updateParticles, spawnRing, updateEffects, floatText, updateFloaters,
+  updateTrail, spawnBolt, updateAmbient, spawnSwing, spawnImpact,
 } from './fx.js';
 
 // ============================================================ Renderer, scene, post-processing
@@ -158,6 +158,26 @@ function restArm(rig, k = 0.2) {
   rig.armL.rotation.z = lerp(rig.armL.rotation.z, 0, k);
   rig.body.rotation.x = lerp(rig.body.rotation.x, 0, k);
   rig.body.rotation.y = lerp(rig.body.rotation.y, 0, k);
+  rig.body.rotation.z = lerp(rig.body.rotation.z, 0, k);
+}
+// Left hand reaches for the katana handle, so the sword is held two-handed.
+const _grip = new THREE.Vector3(), _sh = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+function twoHandGrip(rig) {
+  if (!rig.twoHanded) return;
+  const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined);
+  if (!blade) return;
+  rig.root.updateMatrixWorld(true);
+  blade.localToWorld(_grip.set(0, 0.14, 0));
+  rig.body.worldToLocal(_grip);
+  _sh.copy(rig.armL.position);
+  _grip.sub(_sh).normalize();
+  rig.armL.quaternion.setFromUnitVectors(_down, _grip);
+}
+// Step into the cut: front foot forward, back leg pushing, hips dropping.
+function poseFeet(rig, s) {
+  rig.legL.rotation.x = lerp(0, -0.6, s);
+  rig.legR.rotation.x = lerp(0, 0.45, s);
+  rig.body.position.y = 1.0 - 0.09 * s;
 }
 function poseAttack(rig, anim, t, A) {
   const s = smooth(A.hitAt - 0.09, A.hitAt + 0.05, t);
@@ -167,6 +187,7 @@ function poseAttack(rig, anim, t, A) {
   else if (anim === 'slashB') { arm.rotation.set(-1.45, lerp(-1.5, 1.4, s), 0); body.rotation.y = lerp(-0.5, 0.45, s); w.x = lerp(-1.1, -0.15, s); }
   else if (anim === 'spin') { arm.rotation.set(-1.5, -1.2, 0); body.rotation.y = lerp(0, -Math.PI * 2, s); w.x = -0.1; }
   else { arm.rotation.set(lerp(-3.0, -0.5, s), 0, 0); body.rotation.x = lerp(-0.18, 0.25, s); w.x = lerp(-0.7, -0.2, s); }
+  poseFeet(rig, smooth(0, A.hitAt + 0.05, t) * (1 - smooth(A.hitAt + 0.15, A.dur, t)));
   const r = smooth(A.hitAt + 0.1, A.dur, t);
   if (r > 0) {
     w.x = lerp(w.x, rig.wristRest ?? 0, r);
@@ -199,7 +220,8 @@ const PARRY_WINDOW = 0.25;
 const P = {
   pos: new THREE.Vector3(), y: 0, vy: 0, grounded: true, facing: Math.PI, kb: new THREE.Vector3(),
   hp: 100, st: 100, ki: 0, lvl: 1, xp: 0, gold: 0, potions: 2, elixirs: 0,
-  weapon: 'worn', ownedWeapons: ['worn'], armor: 'cloth', charms: [], skin: 'ronin', ownedSkins: ['ronin'],
+  weapon: 'worn', ownedWeapons: ['worn'], armor: 'cloth', charms: [], skin: 'ronin', ownedSkins: ['ronin', 'custom'],
+  look: { ...DEFAULT_LOOK },
   discovered: [0], lastTown: 0, bossDead: false, kills: 0, mastersDead: [], warlordsDead: [], chestsLooted: [],
   state: 'idle', stateT: 0, atk: null, combo: 0, queued: false, hitDone: false,
   invul: 0, hitInvul: 0, stDelay: 0, dead: false, dodgeDir: new THREE.Vector3(),
@@ -216,9 +238,12 @@ const ARMOR_COLORS = { cloth: null, leather: 0x5a2e1c, iron: 0x4d535c, oyoroi: 0
 let rig = null;
 function rebuildPlayerRig() {
   if (rig) scene.remove(rig.root);
-  const w = W(), sk = SKINS[P.skin];
+  const w = W(), L = P.look, sk = SKINS[P.skin].custom
+    ? { cloth: L.cloth, cloth2: L.cloth2, hat: L.hat === 'none' ? null : L.hat, scarf: L.scarf }
+    : SKINS[P.skin];
   rig = makeHumanoid({
     cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf, weapon: 'katana',
+    skin: L.skin, hair: L.hair,
     armor: sk.armor ?? ARMOR_COLORS[P.armor],
     blade: { color: w.color, glow: w.glow, len: w.len ?? 1, style: w.style },
   });
@@ -240,7 +265,7 @@ let lockFailed = false;
 let ui = 'title';
 let started = false;
 let time = 0;
-let shakeAmt = 0, hitstop = 0, hurtFlash = 0, slowmo = 0;
+let shakeAmt = 0, hitstop = 0, hurtFlash = 0, slowmo = 0, fovKick = 0;
 const shake = a => { shakeAmt = Math.max(shakeAmt, a); };
 
 function inputDir() {
@@ -375,7 +400,7 @@ function startAttack(base, combo) {
   P.state = 'attack'; P.atk = A; P.combo = combo; P.stateT = 0; P.hitDone = false; P.queued = false;
   P.blocking = false;
   faceTarget();
-  if (A.heavy) spawnSlash(A.arc, slashColor(), A.hitAt - 0.06, playerFollow, 0.24, (A.range / 3.9));
+  spawnSwing({ ...SWINGS[A.anim], follow: playerFollow, color: slashColor(), radius: A.range * 0.95, delay: Math.max(0, A.hitAt - 0.08) });
   // Ninjas read your attack and may leap away.
   for (const e of enemies) {
     if (!e.alive || !e.def.evade || e.evadeCd > 0 || ['windup', 'strike', 'throw'].includes(e.state)) continue;
@@ -388,6 +413,13 @@ function startAttack(base, combo) {
   }
 }
 const playerFollow = () => ({ x: P.pos.x, y: P.y, z: P.pos.z, facing: P.facing });
+// Slash streak shapes for each attack: plane tilt, sweep direction, arc and timing.
+const SWINGS = {
+  slashA: { plane: 0.18, dir: -1, arc: 2.3, sweep: 1.5, life: 0.22 },
+  slashB: { plane: -0.18, dir: 1, arc: 2.3, sweep: 1.5, life: 0.22 },
+  chop: { plane: 'v', dir: -1, arc: 2.1, sweep: 1.4, life: 0.24, height: 1.4 },
+  heavy: { plane: 0.6, dir: -1, arc: 3.4, sweep: 1.9, life: 0.32, intensity: 1.3 },
+};
 
 function trySpirit() {
   if (P.dead || ['dodge', 'stunned', 'spirit'].includes(P.state)) return;
@@ -432,6 +464,7 @@ function hitDamage(e, A) {
   let dmg = atkPower() * A.mult * rand(0.9, 1.1) * (crit ? 1.6 : 1);
   dmg *= 1 + Math.min(0.3, P.comboCount * 0.02);
   if (W().effect === 'demonbane' && DEMON_TYPES.has(e.type)) dmg *= 1.5;
+  if (e.enraged) dmg *= 1.25;
   e.parried = false;
   return { dmg: Math.round(dmg), crit };
 }
@@ -447,7 +480,13 @@ function doPlayerHit(A) {
     const dot = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
     if (dot < A.dot) continue;
     const { dmg, crit } = hitDamage(e, A);
-    damageEnemy(e, dmg, crit, A, dx / (d || 1), dz / (d || 1));
+    const nx = dx / (d || 1), nz = dz / (d || 1);
+    const hx = e.pos.x - nx * e.def.radius * 0.8, hz = e.pos.z - nz * e.def.radius * 0.8;
+    spawnImpact(hx, height(e.pos.x, e.pos.z) + e.def.scale * 1.3, hz, {
+      color: crit ? 0xffe070 : slashColor(), size: crit ? 2.2 : 1.5,
+      blood: DEMON_TYPES.has(e.type) ? 0x6a1aa0 : 0xb81010, dx: nx, dz: nz,
+    });
+    damageEnemy(e, dmg, crit, A, nx, nz);
     applyWeaponEffect(e, dmg);
     P.ki = Math.min(100, P.ki + (A.spirit ? 0 : 6));
     P.comboCount++;
@@ -460,7 +499,7 @@ function doPlayerHit(A) {
     const dx = pr.pos.x - P.pos.x, dz = pr.pos.z - P.pos.z, d = Math.hypot(dx, dz);
     if (d < A.range + 0.8 && (dx * fx + dz * fz) / (d || 1) > -0.2) deflect(pr);
   }
-  if (hit) { hitstop = A.heavy ? 0.09 : 0.05; shake(A.heavy ? 0.35 : 0.15); }
+  if (hit) { hitstop = A.heavy ? 0.09 : 0.05; shake(A.heavy ? 0.35 : 0.15); fovKick = A.heavy ? 4 : 1.5; }
   if (A.spirit) {
     shake(0.7); hitstop = 0.12;
     burst(P.pos.x, P.y + 0.6, P.pos.z, 90, slashColor(), 12, 4, 0.8, 3);
@@ -496,7 +535,7 @@ function damagePlayer(amount, src, opts = {}) {
     if ((dx * fx + dz * fz) / d > 0.2) {
       if (time - P.blockPressT < PARRY_WINDOW) { parry(src); return false; }
       P.st -= amount * 1.3; P.stDelay = 0.8;
-      burst(P.pos.x + fx, P.y + 1.4, P.pos.z + fz, 10, 0xffd890, 4, 2, 0.35, 6);
+      spawnImpact(P.pos.x + fx * 0.9, P.y + 1.45, P.pos.z + fz * 0.9, { color: 0xffd890, size: 1.6 });
       shake(0.15);
       if (P.st <= 0) {
         P.st = 0; P.blocking = false; P.state = 'stunned'; P.stateT = 0;
@@ -520,7 +559,10 @@ function damagePlayer(amount, src, opts = {}) {
   hurtFlash = 1;
   shake(0.4);
   floatText(headPos(), '-' + dmg, 'hurt');
-  burst(P.pos.x, P.y + 1.3, P.pos.z, 14, 0xff2a1a, 4, 3, 0.5);
+  if (src) {
+    const dx = P.pos.x - src.pos.x, dz = P.pos.z - src.pos.z, d = Math.hypot(dx, dz) || 1;
+    spawnImpact(P.pos.x - dx / d * 0.4, P.y + 1.3, P.pos.z - dz / d * 0.4, { color: 0xff8060, size: 1.2, blood: 0xb81010, dx: dx / d, dz: dz / d });
+  } else burst(P.pos.x, P.y + 1.3, P.pos.z, 14, 0xff2a1a, 4, 3, 0.5);
   if (src) {
     const dx = P.pos.x - src.pos.x, dz = P.pos.z - src.pos.z, d = Math.hypot(dx, dz) || 1;
     P.kb.set(dx / d, 0, dz / d).multiplyScalar(dmg > maxHp() * 0.15 ? 10 : 5);
@@ -535,6 +577,8 @@ function parry(src) {
   shake(0.25);
   const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
   burst(P.pos.x + fx * 1.2, P.y + 1.5, P.pos.z + fz * 1.2, 40, 0xffe080, 7, 4, 0.5, 8);
+  spawnImpact(P.pos.x + fx * 1.0, P.y + 1.5, P.pos.z + fz * 1.0, { color: 0xffe080, size: 2.6 });
+  spawnSwing({ follow: playerFollow, plane: -0.5, dir: 1, color: 0xffe0a0, radius: 2.0, arc: 1.6, sweep: 1.0, life: 0.2 });
   floatText(headPos(), 'PARRY!', 'crit', 1);
   src.state = 'hurt';
   src.t = src === boss ? -0.2 : -0.9;
@@ -629,7 +673,10 @@ function updatePlayer(dt) {
     if (!P.hitDone && P.stateT >= A.hitAt) {
       P.hitDone = true;
       doPlayerHit(A);
-      if (A.spirit) spawnSlash('wide', slashColor(), 0, playerFollow, 0.35, 1.8);
+      if (A.spirit) {
+        spawnSwing({ follow: playerFollow, plane: 0.08, dir: -1, color: slashColor(), radius: A.range, arc: 5.8, sweep: 2.4, life: 0.4, intensity: 1.4 });
+        spawnSwing({ follow: playerFollow, plane: -0.25, dir: -1, color: 0xffffff, radius: A.range * 0.75, arc: 5.0, sweep: 2.0, life: 0.32, delay: 0.05, height: 1.0 });
+      }
     }
     poseAttack(rig, A.anim, P.stateT, A);
     swinging = P.stateT > A.hitAt - 0.12 && P.stateT < A.hitAt + 0.1;
@@ -665,7 +712,8 @@ function updatePlayer(dt) {
 
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
   rig.root.rotation.y = P.facing;
-  if (P.state !== 'dodge') animateWalk(rig, dt, P.grounded ? speedFrac : 0);
+  if (P.state !== 'dodge' && P.state !== 'attack' && P.state !== 'spirit') animateWalk(rig, dt, P.grounded ? speedFrac : 0);
+  if (P.state !== 'dodge') twoHandGrip(rig);
   if (!P.grounded && P.state === 'idle') { rig.legL.rotation.x = -0.5; rig.legR.rotation.x = 0.3; }
   rig.root.visible = !(P.hitInvul > 0.2 && Math.floor(P.hitInvul * 20) % 2 === 0);
 
@@ -674,7 +722,7 @@ function updatePlayer(dt) {
   const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined) ?? rig.weapon;
   _base.set(0, -0.3, 0); _tip.set(0, blade.userData.tipY ?? -1.5, 0);
   blade.localToWorld(_base); blade.localToWorld(_tip);
-  updateTrail(_base, _tip, swinging, slashColor());
+  updateTrail(_base, _tip, swinging, slashColor(), dt);
 }
 
 // ============================================================ Projectiles (shurikens)
@@ -832,6 +880,10 @@ function damageEnemy(e, dmg, crit, A, nx, nz) {
   const p = e.def.poise;
   const stagger = A.spirit || p === 0 || (p === 1 && (A.heavy || A.finisher)) || (p === 2 && A.heavy);
   e.kb.set(nx, 0, nz).multiplyScalar(stagger ? (A.heavy ? 10 : 6) / e.def.scale : 1);
+  // Remember where the blow came from (in the enemy's own frame) to flinch and fall away from it.
+  const fx = Math.sin(e.facing), fz = Math.cos(e.facing);
+  e.hitFront = -(nx * fx + nz * fz);
+  e.hitSide = nx * fz - nz * fx;
   if (e.hp <= 0) { killEnemy(e); return; }
   if (stagger && e !== boss) { e.state = 'hurt'; e.t = 0; e.glow = 0; }
   if (e === boss && e.phase === 1 && e.hp < e.maxHp * 0.5) enrageBoss(e);
@@ -850,6 +902,8 @@ function killEnemy(e) {
   floatText(new THREE.Vector3(e.pos.x, y, e.pos.z), '+' + e.xp + ' xp', 'xp', 1.3);
   burst(e.pos.x, y - e.def.scale, e.pos.z, 40, DEMON_TYPES.has(e.type) ? 0x9a3aff : 0xffb347, 4, 6, 1.1, 3);
   gainXP(e.xp);
+  hitstop = Math.max(hitstop, 0.08);
+  if (e.role) { slowmo = 0.9; shake(0.6); fovKick = 6; }
   if (e === boss) victory();
   else if (e.role === 'master') {
     const i = NINJA_BASES.indexOf(e.base);
@@ -929,7 +983,7 @@ function updateEnemies(dt, playerSafe) {
     if (!e.alive) {
       e.deadT += dt;
       if (e.deadT < 1.3) {
-        e.rig.body.rotation.x = Math.min(1.45, e.deadT * 3);
+        e.rig.body.rotation.x = Math.min(1.45, e.deadT * 3) * ((e.hitFront ?? 1) > 0 ? -1 : 1);
         e.rig.body.position.y = lerp(1.0, 0.4, Math.min(1, e.deadT * 2));
         if (e.deadT > 0.8) e.rig.root.position.y -= dt * 1.5 * d.scale;
       } else if (e.rig.root.visible) e.rig.root.visible = false;
@@ -938,6 +992,9 @@ function updateEnemies(dt, playerSafe) {
       continue;
     }
     e.rig.root.visible = dist < 85 + 25 * d.scale;
+    // Far enemies swap to a single-mesh stand-in and skip limb animation.
+    e.far = dist > 38 + 6 * d.scale && !e.role;
+    setLod(e.rig, e.far);
     if (dist > 120 && e.state === 'idle') { if (e.bar) e.bar.visible = false; continue; }
     activeList.push(e);
     if (e.role && !['idle', 'return'].includes(e.state)) engaged = e;
@@ -978,6 +1035,7 @@ function updateEnemies(dt, playerSafe) {
           else { mvx = tx / tl; mvz = tz / tl; moveSpeed = sp * 0.3; turnTo(Math.atan2(tx, tz), 4); }
         }
         if (!playerSafe && dist < d.aggro && Math.abs(P.y - height(e.pos.x, e.pos.z)) < 8) {
+          if (e.role && !e.talked && !P.dead) { openBossTalk(e); break; }
           e.state = 'chase';
           floatText(new THREE.Vector3(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 2.4 + 0.6, e.pos.z), '!', 'alert', 0.8);
           if (e === boss) { banner('Shuten-doji', 'The Demon King rises to face you', 3); shake(0.5); }
@@ -1012,7 +1070,17 @@ function updateEnemies(dt, playerSafe) {
       case 'windup': {
         turnTo(toPlayer, 5);
         e.glow = Math.min(1, e.t / wind) * 0.8;
-        if (e.t >= wind) { e.state = 'strike'; e.t = 0; e.struck = false; }
+        if (e.t >= wind) {
+          e.state = 'strike'; e.t = 0; e.struck = false;
+          if (!e.far) {
+            const demon = DEMON_TYPES.has(e.type);
+            spawnSwing({
+              follow: () => ({ x: e.pos.x, y: height(e.pos.x, e.pos.z), z: e.pos.z, facing: e.facing }),
+              plane: 'v', dir: -1, color: demon ? 0xff6a3a : 0xdfe8ff, radius: d.range + 0.3, arc: 2.0, sweep: 1.3,
+              life: 0.22, height: 1.25 * d.scale, intensity: demon ? 0.8 : 0.6,
+            });
+          }
+        }
         break;
       }
       case 'strike': {
@@ -1095,6 +1163,7 @@ function updateEnemies(dt, playerSafe) {
     const gy = height(e.pos.x, e.pos.z);
     e.rig.root.position.set(e.pos.x, gy, e.pos.z);
     e.rig.root.rotation.y = e.facing;
+    if (e.far) { if (e.bar) e.bar.visible = false; continue; }
     e.moveFrac = lerp(e.moveFrac, moveSpeed / d.speed, 0.2);
     animateWalk(e.rig, dt, Math.min(1.6, e.moveFrac));
 
@@ -1118,7 +1187,8 @@ function updateEnemies(dt, playerSafe) {
       e.rig.armL.rotation.x = lerp(0, -3.0, k);
       e.rig.body.rotation.x = -0.2 * k;
     } else if (e.state === 'hurt') {
-      e.rig.body.rotation.x = lerp(e.rig.body.rotation.x, -0.3, 0.3);
+      e.rig.body.rotation.x = lerp(e.rig.body.rotation.x, -0.4 * (e.hitFront ?? 1), 0.35);
+      e.rig.body.rotation.z = lerp(e.rig.body.rotation.z, 0.3 * (e.hitSide ?? 0), 0.35);
     } else if (e.state === 'charge') {
       e.rig.body.rotation.x = 0.35;
       arm.rotation.set(-1.2, 0, 0);
@@ -1189,7 +1259,8 @@ function updateNPCs(dt) {
     if (pd < 0.9 && pd > 0.01) { v.pos.x += (v.pos.x - P.pos.x) / pd * (0.9 - pd); v.pos.z += (v.pos.z - P.pos.z) / pd * (0.9 - pd); }
     v.rig.root.position.set(v.pos.x, height(v.pos.x, v.pos.z), v.pos.z);
     v.rig.root.rotation.y = v.facing;
-    animateWalk(v.rig, dt, moving);
+    setLod(v.rig, dist > 40);
+    if (dist <= 40) animateWalk(v.rig, dt, moving);
   }
   for (const n of staticNPCs) n.body.position.y = 1.0 + Math.sin(time * 2 + n.root.id) * 0.015;
 }
@@ -1300,6 +1371,7 @@ function openModal(html, kind) {
 function closeModal() {
   ui = null;
   modal.classList.add('hidden');
+  modal.classList.remove('talkmode', 'side');
 }
 modalBox.addEventListener('click', e => {
   const el = e.target.closest('[data-act]');
@@ -1307,7 +1379,7 @@ modalBox.addEventListener('click', e => {
   const [act, arg] = el.dataset.act.split('|');
   switch (act) {
     case 'close': closeModal(); break;
-    case 'new': startGame(null); break;
+    case 'new': startGame(null); openCreator(true); break;
     case 'continue': startGame(loadSave()); break;
     case 'buy': buy(arg); break;
     case 'tab': shopTab = arg; openShop(shopTown); break;
@@ -1316,6 +1388,14 @@ modalBox.addEventListener('click', e => {
     case 'rest': rest(); break;
     case 'travel': travel(Number(arg)); break;
     case 'rise': rise(); break;
+    case 'talk': talkChoice(arg); break;
+    case 'look': setLook(arg); break;
+    case 'creator': openCreator(false); break;
+    case 'creatorDone':
+      closeModal();
+      save();
+      if (creatorFromStart) banner(TOWNS[P.lastTown].name, 'Talk to the elder, then head north', 3);
+      break;
   }
 });
 
@@ -1426,7 +1506,8 @@ function openShop(town) {
   } else if (shopTab === 'skins') {
     rows = Object.entries(SKINS).map(([key, s]) => {
       const owned = P.ownedSkins.includes(key);
-      const swatch = `<span class="swatch" style="background:linear-gradient(135deg,${hex(s.cloth)} 50%,${hex(s.armor ?? s.scarf)} 50%)"></span>`;
+      const sc = s.custom ? P.look : s;
+      const swatch = `<span class="swatch" style="background:linear-gradient(135deg,${hex(sc.cloth)} 50%,${hex(sc.armor ?? sc.scarf)} 50%)"></span>`;
       const btn = owned
         ? `<button class="secondary" data-act="wear|${key}" ${P.skin === key ? 'disabled' : ''}>${P.skin === key ? 'Wearing' : 'Wear'}</button>`
         : buyBtn('s:' + key, s.price);
@@ -1496,7 +1577,7 @@ function openInventory() {
     <p class="sub">${ARMORS[P.armor].name} (def ${defense()}) &middot; Charms: ${charms} &middot; Potions ${P.potions} &middot; Elixirs ${P.elixirs}</p>
     <h3>Swords</h3><div class="items">${swords}</div>
     <h3>Outfits</h3><div class="items">${skins}</div>
-    <div class="btns"><button class="secondary" data-act="close">Close (I)</button></div>`;
+    <div class="btns"><button data-act="creator">Customize appearance</button><button class="secondary" data-act="close">Close (I)</button></div>`;
   if (ui === 'inventory') modalBox.innerHTML = html; else openModal(html, 'inventory');
 }
 
@@ -1544,6 +1625,81 @@ function openElder(town) {
   openModal(`<h2>Elder of ${town.name}</h2><p class="sub">An old villager leans on a staff.</p>
     ${town.elder.map(l => `<p>&ldquo;${l}&rdquo;</p>`).join('')}
     <div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
+}
+
+// ============================================================ Pre-battle talk
+let talkTarget = null;
+function talkKey(e) {
+  if (e === boss) return 'boss';
+  if (e.role === 'master') return 'master' + NINJA_BASES.indexOf(e.base);
+  return 'warlord' + DEMON_BASES.indexOf(e.base);
+}
+function talkBox(e, lines, choices) {
+  openModal(`<div class="talk"><div class="speaker">${e.title}</div>
+    ${lines.map(l => `<p>&ldquo;${l}&rdquo;</p>`).join('')}
+    <div class="choices">${choices.join('')}</div></div>`, 'talk');
+  modal.classList.add('talkmode');
+}
+function openBossTalk(e) {
+  talkTarget = e;
+  e.talked = true;
+  e.facing = Math.atan2(P.pos.x - e.pos.x, P.pos.z - e.pos.z);
+  P.facing = Math.atan2(e.pos.x - P.pos.x, e.pos.z - P.pos.z);
+  P.state = 'idle'; P.blocking = false; P.lock = e;
+  showTalkChoices(e, BOSS_TALK[talkKey(e)].lines, false);
+}
+function showTalkChoices(e, lines, asked) {
+  const T = BOSS_TALK[talkKey(e)];
+  talkBox(e, lines, [
+    `<button data-act="talk|bow">Bow, then draw your sword<span>Honor the duel: start with full Ki</span></button>`,
+    `<button data-act="talk|taunt">&ldquo;${T.taunt}&rdquo;<span>Taunt: they hit harder, but take more damage and drop more gold</span></button>`,
+    asked ? '' : `<button class="secondary" data-act="talk|ask">&ldquo;Show me how you fight.&rdquo;<span>Learn their moves</span></button>`,
+  ]);
+}
+function talkChoice(c) {
+  const e = talkTarget;
+  if (!e) return;
+  const T = BOSS_TALK[talkKey(e)];
+  if (c === 'ask') { showTalkChoices(e, [T.ask], true); return; }
+  if (c === 'fight') {
+    closeModal();
+    talkTarget = null;
+    e.state = 'chase'; e.t = 0;
+    if (e.talkChoice === 'bow') { P.ki = 100; floatText(headPos(), 'Ki full', 'xp', 1.2); }
+    else { shake(0.5); burst(e.pos.x, height(e.pos.x, e.pos.z) + e.def.scale * 1.5, e.pos.z, 60, 0xff3a10, 5, 5, 1, 2); }
+    banner(e.title, e.talkChoice === 'taunt' ? 'Enraged!' : 'The duel begins', 2);
+    return;
+  }
+  e.talkChoice = c;
+  if (c === 'taunt') { e.enraged = true; e.dmg *= 1.25; e.goldMul *= 1.6; }
+  talkBox(e, [c === 'bow' ? T.bow : T.tauntReply], [`<button data-act="talk|fight">Fight!</button>`]);
+}
+
+// ============================================================ Character creator
+let creatorFromStart = false;
+function openCreator(fromStart) {
+  creatorFromStart = fromStart;
+  renderCreator();
+}
+function renderCreator() {
+  const L = P.look;
+  const row = (key, label) => `<div class="crow"><div class="clabel">${label}</div><div class="swatches">${LOOK_OPTIONS[key].map(c =>
+    `<button class="sw ${L[key] === c ? 'on' : ''}" style="background:${hex(c)}" data-act="look|${key}:${c}" aria-label="${label} ${hex(c)}"></button>`).join('')}</div></div>`;
+  const hats = LOOK_OPTIONS.hat.map(h => `<button class="hatbtn ${L.hat === h ? 'on' : ''}" data-act="look|hat:${h}">${HAT_NAMES[h]}</button>`).join('');
+  const html = `<h2>Your samurai</h2>
+    <p class="sub">Skin and hair apply to every outfit. Robe, hakama, scarf and headwear make up <b>Your Own Style</b>, which you can wear anytime from the inventory (I).</p>
+    ${row('skin', 'Skin')}${row('hair', 'Hair')}${row('cloth', 'Robe')}${row('cloth2', 'Hakama')}${row('scarf', 'Scarf')}
+    <div class="crow"><div class="clabel">Headwear</div><div class="hats">${hats}</div></div>
+    <div class="btns"><button data-act="creatorDone">${creatorFromStart ? 'Begin the journey' : 'Done'}</button></div>`;
+  if (ui === 'creator') modalBox.innerHTML = html;
+  else { openModal(html, 'creator'); modal.classList.add('side'); }
+}
+function setLook(arg) {
+  const [k, v] = arg.split(':');
+  P.look[k] = k === 'hat' ? v : Number(v);
+  if (!['skin', 'hair'].includes(k)) P.skin = 'custom';
+  rebuildPlayerRig();
+  renderCreator();
 }
 
 function victory() {
@@ -1725,8 +1881,27 @@ function updateCamera(dt) {
     cx += rand(-1, 1) * shakeAmt * 0.4; cy += rand(-1, 1) * shakeAmt * 0.4; cz += rand(-1, 1) * shakeAmt * 0.4;
     shakeAmt = Math.max(0, shakeAmt - dt * 1.8);
   }
-  camera.position.set(cx, cy, cz);
-  camera.lookAt(tx, ty, tz);
+  if (ui === 'creator') {
+    const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
+    camera.position.set(P.pos.x + fx * 3.4 - fz * 0.9, P.y + 1.7, P.pos.z + fz * 3.4 + fx * 0.9);
+    camera.lookAt(P.pos.x - fz * 0.7, P.y + 1.2, P.pos.z + fx * 0.7);
+  } else if (talkTarget) {
+    // Over-the-shoulder framing of the boss during the pre-battle talk.
+    const T = talkTarget, th = height(T.pos.x, T.pos.z) + T.def.scale * 1.9;
+    const ax = T.pos.x - P.pos.x, az = T.pos.z - P.pos.z, al = Math.hypot(ax, az) || 1;
+    // Stand partway toward the boss, off to one side, so they fill the upper frame.
+    const along = Math.max(0, al - 7 - T.def.scale * 3);
+    cx = P.pos.x + ax / al * along + az / al * 2.2; cz = P.pos.z + az / al * along - ax / al * 2.2;
+    cy = Math.max(height(cx, cz) + 1.2, th * 0.75);
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(T.pos.x, th, T.pos.z);
+  } else {
+    camera.position.set(cx, cy, cz);
+    camera.lookAt(tx, ty, tz);
+  }
+  fovKick = Math.max(0, fovKick - dt * 20);
+  const fov = 60 - fovKick;
+  if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
   sun.position.set(tx + SUN_DIR.x * 150, ty + SUN_DIR.y * 150, tz + SUN_DIR.z * 150);
   sun.target.position.set(tx, ty, tz);
 }
@@ -1738,7 +1913,7 @@ function save() {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       lvl: P.lvl, xp: P.xp, gold: P.gold, potions: P.potions, elixirs: P.elixirs, weapon: P.weapon, armor: P.armor,
       charms: P.charms, discovered: P.discovered, lastTown: P.lastTown, bossDead: P.bossDead, kills: P.kills,
-      ownedWeapons: P.ownedWeapons, skin: P.skin, ownedSkins: P.ownedSkins,
+      ownedWeapons: P.ownedWeapons, skin: P.skin, ownedSkins: P.ownedSkins, look: P.look,
       mastersDead: P.mastersDead, warlordsDead: P.warlordsDead, chestsLooted: P.chestsLooted,
     }));
   } catch { /* storage unavailable: play on without saving */ }
@@ -1749,7 +1924,8 @@ function loadSave() {
     if (!s) s = JSON.parse(localStorage.getItem(OLD_SAVE_KEY));
     if (!s || !WEAPONS[s.weapon] || !ARMORS[s.armor] || !TOWNS[s.lastTown]) return null;
     s.ownedWeapons = [...new Set(['worn', s.weapon, ...(s.ownedWeapons ?? [])])].filter(k => WEAPONS[k]);
-    s.ownedSkins = [...new Set(['ronin', ...(s.ownedSkins ?? [])])].filter(k => SKINS[k]);
+    s.ownedSkins = [...new Set(['ronin', 'custom', ...(s.ownedSkins ?? [])])].filter(k => SKINS[k]);
+    s.look = { ...DEFAULT_LOOK, ...(s.look ?? {}) };
     if (!SKINS[s.skin]) s.skin = 'ronin';
     return s;
   } catch { return null; }
@@ -1765,10 +1941,12 @@ function placeAtTown(i) {
 function startGame(s) {
   Object.assign(P, {
     lvl: 1, xp: 0, gold: 0, potions: 2, elixirs: 0, weapon: 'worn', armor: 'cloth', charms: [],
-    discovered: [0], lastTown: 0, bossDead: false, kills: 0, ownedWeapons: ['worn'], skin: 'ronin', ownedSkins: ['ronin'],
+    discovered: [0], lastTown: 0, bossDead: false, kills: 0, ownedWeapons: ['worn'], skin: 'ronin', ownedSkins: ['ronin', 'custom'],
+    look: { ...DEFAULT_LOOK },
     mastersDead: [], warlordsDead: [], chestsLooted: [],
   }, s ?? {});
   for (const k of ['charms', 'discovered', 'ownedWeapons', 'ownedSkins', 'mastersDead', 'warlordsDead', 'chestsLooted']) P[k] = [...P[k]];
+  P.look = { ...P.look };
   P.dead = false; P.state = 'idle'; P.hp = maxHp(); P.st = maxSt(); P.ki = 0;
   if (P.bossDead && boss.alive) markDead(boss);
   NINJA_BASES.forEach((nb, i) => {

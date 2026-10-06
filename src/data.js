@@ -127,12 +127,42 @@ export const CHARMS = {
 
 // Cosmetic outfits. Sold by every town's shop.
 export const SKINS = {
+  custom:  { name: 'Your Own Style', price: 0, custom: true, desc: 'The colors and headwear you chose in the character creator.' },
   ronin:   { name: 'Wandering Ronin', price: 0, cloth: 0x1f2b4d, cloth2: 0x24242e, hat: 'kasa', scarf: 0xa3231a, desc: 'Indigo robes and a straw kasa.' },
   crimson: { name: 'Crimson Samurai', price: 150, cloth: 0x7a1414, cloth2: 0x2a1010, hat: 'kabuto', scarf: 0xd4a72c, armor: 0x8e1b1b, desc: 'Red lacquer and a horned kabuto helmet.' },
   shadow:  { name: 'Shadow Ninja', price: 200, cloth: 0x1b1b21, cloth2: 0x121216, hat: 'ninja', scarf: 0x8a1010, desc: 'Black shinobi garb and a mask.' },
   wolf:    { name: 'White Wolf', price: 250, cloth: 0xe6e3dc, cloth2: 0x7d7f88, hat: 'kasa', scarf: 0x3a6ab8, desc: 'Pale robes of a northern swordsman.' },
   hunter:  { name: 'Demon Hunter', price: 450, cloth: 0x3b1f5a, cloth2: 0x1a1026, hat: 'onimask', scarf: 0x9a3aff, desc: 'Wear the face of what you hunt.' },
   shogun:  { name: 'Golden Shogun', price: 800, cloth: 0x2a2420, cloth2: 0x1a1612, hat: 'kabuto', scarf: 0xffffff, armor: 0xc9a227, desc: 'Gilded armor fit for a warlord.' },
+};
+
+// Character creator choices. "Your Own Style" (the custom outfit) uses the colors and
+// headwear picked here; skin tone and hair color apply to every outfit.
+export const LOOK_OPTIONS = {
+  skin: [0xf0c8a0, 0xe0b48a, 0xc99a72, 0xa87850, 0x7a5236, 0x5a3a26],
+  hair: [0x14100c, 0x3a2414, 0x6a4a2a, 0x9a9a9a, 0xe8e8e8, 0x7a1a14],
+  cloth: [0x1f2b4d, 0x7a1414, 0x1b1b21, 0xe6e3dc, 0x2a4a2a, 0x3b1f5a, 0x8a5a1a, 0x24467a],
+  cloth2: [0x24242e, 0x2a1010, 0x121216, 0x7d7f88, 0x3a3020, 0x1a1026, 0x4a3a2a, 0x2a3440],
+  scarf: [0xa3231a, 0xd4a72c, 0x3a6ab8, 0xffffff, 0x2a8a4a, 0x9a3aff, 0x1a1a1a, 0xe07a2a],
+  hat: ['kasa', 'none', 'band', 'kabuto', 'ninja', 'onimask'],
+};
+export const HAT_NAMES = { kasa: 'Straw kasa', none: 'Topknot', band: 'Headband', kabuto: 'Kabuto helmet', ninja: 'Ninja hood', onimask: 'Oni mask' };
+export const DEFAULT_LOOK = { skin: 0xe0b48a, hair: 0x14100c, cloth: 0x1f2b4d, cloth2: 0x24242e, scarf: 0xa3231a, hat: 'kasa' };
+
+// What each boss says before the duel. Choices:
+//   bow   - honor the duel: you start the fight with full Ki.
+//   taunt - the boss is enraged: hits harder, but takes more damage and drops more gold.
+//   ask   - the boss reveals how it fights (then you choose again).
+export const BOSS_TALK = {
+  master0: { lines: ['So the wandering ronin finally finds the Kage. You cut through my students like reeds.', 'Behind me sleeps a gate to the demon realm. My clan was paid well to guard it.'], ask: 'My shuriken fly in threes. Block as they come, and they will fly back to me. If you can.', bow: 'Manners. How rare. Then let us do this properly.', taunt: 'Paid guards? I have cut down scarecrows with more honor.', tauntReply: 'Then die angry, ronin!' },
+  master1: { lines: ['Mist hides the blade. Mist hides the gate. Mist will hide your body.', 'Kasumi does not lose twice.'], ask: 'I strike quick and leap away. Strike when I land, not when I flee.', bow: 'A bow... You remind me of my old master. A shame.', taunt: 'Twice? I did not know you had lost even once.', tauntReply: 'Insolent dog! The mist takes you!' },
+  master2: { lines: ['Iron Shadow Fort has never fallen. My skin is iron, my will is iron.', 'Turn back, or be hammered flat.'], ask: 'Quick cuts barely scratch me. Only a heavy blow will break my stance.', bow: 'You show respect to iron. Iron will show you none.', taunt: 'Iron rusts, old man.', tauntReply: 'RUST? I will bury you in this fort!' },
+  master3: { lines: ['The Black Lotus blooms only in the dark. The Demon King made it so.', 'Every master before me died. I am the last seal.'], ask: 'I fight like all three before me: fans of shuriken, fast steps, and an iron stance.', bow: 'You honor the dead masters. I will send you to them with honor.', taunt: 'The last seal? Then the last to fall.', tauntReply: 'The lotus will drink your blood!' },
+  warlord0: { lines: ['GOZU SMELLS STEEL. GOZU SMELLS FEAR.', 'Little human came through the portal. Little human will not leave.'], ask: 'GOZU SMASHES THE GROUND! Red ring means run, little human.', bow: 'Bowing? GOZU LIKES THAT. Gozu will crush you politely.', taunt: 'You smell worse than the lava, ox.', tauntReply: 'GOZU WILL EAT YOUR SWORD!' },
+  warlord1: { lines: ['Mezu has watched you since the river. You fight well... for meat.', 'My brother Gozu fell? Then I will be twice as cruel.'], ask: 'My club is long and my patience short. Do not stand still in front of me.', bow: 'Respect, from meat? Mezu will remember it. Briefly.', taunt: 'Your brother squealed when he fell.', tauntReply: 'YOU WILL SCREAM LOUDER!' },
+  warlord2: { lines: ['Ibaraki lost an arm to a samurai once. Ibaraki took his head in return.', 'Come. Let us see what you will lose.'], ask: 'I slam the earth when you are close. Jump, or roll out of the ring.', bow: 'That samurai bowed too. Then he begged.', taunt: 'One arm? This should be quick.', tauntReply: 'I will rip off BOTH of yours!' },
+  warlord3: { lines: ['Kuro burns. Kuro has always burned.', 'The Demon King gave me this flame. Through me, he sees you now.'], ask: 'My flame makes me relentless. Parry my blows, and my guard breaks.', bow: 'The king will be pleased you died with grace.', taunt: 'Then let him watch his pet go out.', tauntReply: 'BURN, RONIN! BURN!' },
+  boss: { lines: ['So. The ronin who walks my road.', 'You slew my masters, my warlords, my children. You stand in my shrine with their blood on your blade.', 'I am Shuten-doji. Kneel, and I will make your death quick.'], ask: 'Hah. I will charge you down, and when I slam the earth, nothing stands. Even you.', bow: 'You bow but do not kneel. Interesting. Then fight, and be remembered.', taunt: 'I did not walk this far to kneel to a drunk demon.', tauntReply: 'INSOLENCE! I will drink from your skull!' },
 };
 
 export const CONSUMABLES = {

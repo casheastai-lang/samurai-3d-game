@@ -116,6 +116,70 @@ export function mergeStatic(root) {
 }
 function mergeRig(r) {
   for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR, r.weapon]) mergeByMaterial(g);
+  addContactShadow(r);
+  buildLod(r);
+}
+
+// Soft dark blob under the feet: grounds characters even where the shadow map is coarse.
+let blobTex = null;
+function addContactShadow(r) {
+  if (!blobTex) {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(0,0,0,0.75)'); g.addColorStop(0.6, 'rgba(0,0,0,0.35)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
+    blobTex = new THREE.CanvasTexture(c);
+  }
+  const blob = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.6 }));
+  blob.position.y = 0.04;
+  blob.renderOrder = 1;
+  r.root.add(blob);
+  r.blob = blob;
+}
+
+// A single-mesh, vertex-colored copy of the whole character for when it is far away:
+// one draw call instead of thirty. Built from the rest pose.
+const lodMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+function buildLod(r) {
+  const root = r.root;
+  const saved = root.scale.clone();
+  root.scale.set(1, 1, 1);
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const parts = [];
+  r.body.traverse(o => {
+    if (!o.isMesh) return;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+    parts.push([g, o.material.color ?? new THREE.Color(0x888888)]);
+  });
+  const total = parts.reduce((n, [g]) => n + g.attributes.position.count, 0);
+  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3), col = new Float32Array(total * 3);
+  let o = 0;
+  for (const [g, c] of parts) {
+    pos.set(g.attributes.position.array, o * 3);
+    nor.set(g.attributes.normal.array, o * 3);
+    for (let i = 0; i < g.attributes.position.count; i++) { col[(o + i) * 3] = c.r; col[(o + i) * 3 + 1] = c.g; col[(o + i) * 3 + 2] = c.b; }
+    o += g.attributes.position.count;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const lod = new THREE.Mesh(geo, lodMat);
+  lod.castShadow = true;
+  lod.visible = false;
+  root.add(lod);
+  root.scale.copy(saved);
+  r.lod = lod;
+}
+// Switch between the full animated model and its single-mesh stand-in.
+export function setLod(r, far) {
+  if (!r.lod || r.lod.visible === far) return;
+  r.lod.visible = far;
+  r.body.visible = !far;
 }
 const fabric = () => ({ map: clothTex(), bumpMap: grainTex(), bumpScale: 0.5, roughness: 0.92 });
 
@@ -355,7 +419,7 @@ export function makeHumanoid(o = {}) {
   weapon.rotation.x = wristRest;
 
   root.scale.setScalar(o.scale ?? 1);
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana' };
   mergeRig(rig);
   return rig;
 }
