@@ -115,7 +115,7 @@ export function mergeStatic(root) {
   return root;
 }
 function mergeRig(r) {
-  for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR, r.weapon]) mergeByMaterial(g);
+  for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR, r.forearmL, r.forearmR, r.weapon]) if (g) mergeByMaterial(g);
   addContactShadow(r);
   buildLod(r);
 }
@@ -397,16 +397,22 @@ export function makeHumanoid(o = {}) {
   const armL = new THREE.Group(); armL.position.set(-0.46, 0.82, 0); body.add(armL);
   const armR = new THREE.Group(); armR.position.set(0.46, 0.82, 0); body.add(armR);
   armR.rotation.order = 'YXZ';
-  for (const arm of [armL, armR]) {
+  // Each arm has an elbow: the upper arm hangs from the shoulder, the forearm from the
+  // elbow 0.32 below it, and the hand sits 0.36 further down the forearm.
+  const forearmL = new THREE.Group(); forearmL.position.y = -0.32; armL.add(forearmL);
+  const forearmR = new THREE.Group(); forearmR.position.y = -0.32; armR.add(forearmR);
+  for (const [arm, fore] of [[armL, forearmL], [armR, forearmR]]) {
     add(arm, new THREE.SphereGeometry(0.13, 9, 7), cloth, 0, 0, 0);
-    add(arm, new THREE.CylinderGeometry(0.12, 0.2, 0.5, 11), cloth, 0, -0.26, 0);
-    add(arm, new THREE.CylinderGeometry(0.055, 0.048, 0.2, 12), skin, 0, -0.56, 0);
-    if (arm === armL || !o.weapon) add(arm, new THREE.SphereGeometry(0.068, 8, 6), skin, 0, -0.68, 0).scale.set(0.9, 1.1, 1.1);
+    add(arm, new THREE.CylinderGeometry(0.12, 0.16, 0.34, 11), cloth, 0, -0.16, 0);
+    add(fore, new THREE.SphereGeometry(0.155, 9, 7), cloth, 0, 0, 0).scale.set(1, 0.6, 1);
+    add(fore, new THREE.CylinderGeometry(0.16, 0.2, 0.2, 11), cloth, 0, -0.08, 0);
+    add(fore, new THREE.CylinderGeometry(0.055, 0.048, 0.2, 12), skin, 0, -0.24, 0);
+    if (arm === armL || !o.weapon) add(fore, new THREE.SphereGeometry(0.068, 8, 6), skin, 0, -0.36, 0).scale.set(0.9, 1.1, 1.1);
   }
 
   // The wrist: the weapon pivots here, so the blade can point away from the forearm
   // instead of continuing it. The fist rides on the wrist, wrapped around the handle.
-  const weapon = new THREE.Group(); weapon.position.y = -0.68; armR.add(weapon);
+  const weapon = new THREE.Group(); weapon.position.y = -0.36; forearmR.add(weapon);
   if (o.weapon) {
     const fist = new THREE.Mesh(new THREE.SphereGeometry(0.072, 8, 6), skin);
     fist.scale.set(1.15, 0.9, 1.25);
@@ -453,8 +459,8 @@ export function makeHumanoid(o = {}) {
   weapon.rotation.x = wristRest;
 
   root.scale.setScalar(o.scale ?? 1);
-  const bow = o.bow ? makeBowRig(armL, body, o.bow) : null;
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana' && o.grip !== 'one', blade, sheathedHilt, bow };
+  const bow = o.bow ? makeBowRig(forearmL, body, o.bow) : null;
+  const rig = { root, body, head, legL, legR, armL, armR, forearmL, forearmR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana' && o.grip !== 'one', blade, sheathedHilt, bow };
   mergeRig(rig);
   return rig;
 }
@@ -907,10 +913,10 @@ export function makeGatehouse(roofColor) {
 // Held in the off hand. In the hand's frame the bow's long axis is +Z (straight up
 // when the arm aims forward), the shot travels along -Y and the archer is toward +Y.
 // The grip sits a third of the way up, as on a real yumi.
-export function makeBowRig(armL, body, o) {
+export function makeBowRig(hand, body, o) {
   const g = new THREE.Group();
-  g.position.y = -0.68;
-  armL.add(g);
+  g.position.y = -0.36;
+  hand.add(g);
   const wood = new THREE.MeshStandardMaterial({ color: o.color ?? 0x6a4a2a, roughness: 0.35, emissive: o.glow ?? 0x000000, emissiveIntensity: o.glow ? 1.6 : 0 });
   const bottom = new THREE.Vector3(0, 0.2, -0.78), top = new THREE.Vector3(0, 0.24, 1.5);
   const curve = new THREE.CatmullRomCurve3([bottom, new THREE.Vector3(0, 0.03, -0.45), new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0.05, 0.75), top]);
@@ -969,4 +975,79 @@ export function setBowDraw(bow, nockLocal) {
   bow.nock.copy(n);
   p.setXYZ(1, n.x, n.y, n.z);
   p.needsUpdate = true;
+}
+
+// ---------- Village and city details ----------
+// Kura: a thick-walled white storehouse with a dark tiled lower band.
+export function makeKura(roofColor) {
+  const g = new THREE.Group();
+  mesh(new THREE.BoxGeometry(4.6, 0.5, 3.8), tmat('stone', 0xb0aca4, 2, 0.4), 0, 0.25, 0, g);
+  mesh(new THREE.BoxGeometry(4, 3.6, 3.2), tmat('plaster', 0xf6f2ea, 1.5, 1.2), 0, 2.3, 0, g);
+  mesh(new THREE.BoxGeometry(4.05, 1.1, 3.25), tmat('roof', 0x6a6e78, 4, 1), 0, 1.05, 0, g);
+  mesh(new THREE.BoxGeometry(1.2, 1.6, 0.12), smat(0x2a2422, { roughness: 0.5 }), 0, 1.4, 1.62, g);
+  mesh(new THREE.BoxGeometry(0.7, 0.5, 0.1), smat(0x2a2422, { roughness: 0.5 }), 0, 3.3, 1.62, g);
+  gableRoof(g, 4, 3.2, 4.1, new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.45).getHex(), 0.5, 0.5);
+  return g;
+}
+
+// Village well: stone ring, wooden frame, little roof and a bucket.
+export function makeWell() {
+  const g = new THREE.Group();
+  const ring = mesh(new THREE.CylinderGeometry(0.9, 1.0, 0.9, 16, 1, true), tmat('stone', 0xb8b2a8, 1.5, 0.4, { side: THREE.DoubleSide }), 0, 0.45, 0, g);
+  ring.castShadow = true;
+  mesh(new THREE.CircleGeometry(0.85, 16).rotateX(-Math.PI / 2), smat(0x1a2a30, { roughness: 0.1 }), 0, 0.3, 0, g, false);
+  const wood = tmat('wood', 0x7a5a3a, 1, 2);
+  for (const sx of [-1, 1]) mesh(new THREE.BoxGeometry(0.14, 2.2, 0.14), wood, sx * 0.95, 1.1, 0, g);
+  mesh(new THREE.BoxGeometry(2.1, 0.12, 0.14), wood, 0, 2.15, 0, g);
+  const r = mesh(new THREE.ConeGeometry(1.5, 0.7, 4), tmat('roof', 0x9a9aa8, 2, 1), 0, 2.55, 0, g);
+  r.rotation.y = Math.PI / 4; r.scale.set(1, 1, 0.7);
+  mesh(new THREE.CylinderGeometry(0.16, 0.13, 0.25, 10), wood, 0.3, 1.0, 0, g);
+  return g;
+}
+
+// A run of bamboo fence along X.
+export function makeFence(len) {
+  const g = new THREE.Group();
+  const bamboo = smat(0xa89a5a, { roughness: 0.6 });
+  const n = Math.max(2, Math.round(len / 0.45));
+  for (let i = 0; i <= n; i++) mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.3, 6), bamboo, -len / 2 + (i / n) * len, 0.65, 0, g, false);
+  for (const y of [0.45, 1.0]) {
+    const rail = mesh(new THREE.CylinderGeometry(0.035, 0.035, len, 6), smat(0x6a5a3a), 0, y, 0.06, g, false);
+    rail.rotation.z = Math.PI / 2;
+  }
+  return g;
+}
+
+// Temple hall: raised floor, red pillars, a deep hip roof.
+export function makeTempleHall(roofColor) {
+  const g = new THREE.Group();
+  mesh(new THREE.BoxGeometry(14, 1.2, 10), tmat('stone', 0xb8b2a6, 5, 0.5), 0, 0.6, 0, g);
+  mesh(new THREE.BoxGeometry(4, 0.6, 2.5), tmat('stone', 0xb8b2a6, 2, 0.4), 0, 0.3, 6, g);
+  const red = smat(0xa8301e, { roughness: 0.5 });
+  for (let i = 0; i < 6; i++) for (const sz of [-1, 1]) mesh(new THREE.CylinderGeometry(0.28, 0.28, 4.4, 12), red, -6 + i * 2.4, 3.4, sz * 4, g);
+  mesh(new THREE.BoxGeometry(11, 3.6, 6), tmat('wood', 0x7a4a30, 3, 1), 0, 3.0, 0, g);
+  mesh(new THREE.BoxGeometry(3, 2.6, 0.08), tmat('shoji', 0xfff2dc, 3, 2.6, { emissive: 0x6a4a10, emissiveIntensity: 0.3 }), 0, 2.5, 3.05, g, false);
+  mesh(new THREE.BoxGeometry(14.4, 0.4, 9), tmat('wood', 0x4a2a1a, 4, 1), 0, 5.6, 0, g);
+  hipRoof(g, 17, 12, 5.8, new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.45).getHex(), 3.2);
+  return g;
+}
+
+// Red arched footbridge (along Z) for garden ponds and the castle moat.
+export function makeArchBridge(len = 10, width = 2.6) {
+  const g = new THREE.Group();
+  const red = smat(0xb0301e, { roughness: 0.5 }), deck = tmat('wood', 0x8a6040, 1, 4);
+  const N = 10, rise = len * 0.14;
+  for (let i = 0; i < N; i++) {
+    const a = i / N, b = (i + 1) / N;
+    const y0 = Math.sin(a * Math.PI) * rise, y1 = Math.sin(b * Math.PI) * rise;
+    const z0 = -len / 2 + a * len, z1 = -len / 2 + b * len;
+    const seg = mesh(new THREE.BoxGeometry(width, 0.2, Math.hypot(z1 - z0, y1 - y0) + 0.05), deck, 0, (y0 + y1) / 2 + 0.3, (z0 + z1) / 2, g);
+    seg.rotation.x = -Math.atan2(y1 - y0, z1 - z0);
+    for (const sx of [-1, 1]) {
+      mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.0, 8), red, sx * width / 2, y0 + 0.8, z0, g);
+      const rail = mesh(new THREE.BoxGeometry(0.09, 0.09, Math.hypot(z1 - z0, y1 - y0)), red, sx * width / 2, (y0 + y1) / 2 + 1.25, (z0 + z1) / 2, g);
+      rail.rotation.x = -Math.atan2(y1 - y0, z1 - z0);
+    }
+  }
+  return g;
 }

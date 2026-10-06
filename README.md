@@ -35,18 +35,28 @@ so no install or internet connection is needed.
 
 ## The journey
 
-Two small towns, then a great walled city, then two more towns and a second city:
+The road is about 2.7 km long, and each stretch is longer and more dangerous than the one before. Every two villages there is a great walled city:
 
-| Stop | Shops | The road beyond |
+| Stop | Kind | The road beyond |
 | --- | --- | --- |
-| Sakura Village | Steel Katana, Kaze Wakizashi, armor | Bamboo Road: bandits, red oni, Kage Hideout |
-| Kawaguchi | Tamahagane Blade, Frost Fang, Iron Do | Riverlands: red oni, Mist Fang Camp |
-| **Miyako, the Capital** (city) | Grand Market; Forge of Masamune with the city-only **Kogarasu-maru** | Capital Plains |
-| Ishiyama | Mountain Splitter, Inferno Edge, O-yoroi | Stone Pass: blue oni, captains, Iron Shadow Fort |
-| Tsukimura | Raijin's Thunder, Dragon-Scale Armor | Moonlit Forest, Black Lotus Stronghold |
-| **Kurogane Castle City** (city) | Fortress Quartermaster; Black Iron Forge with the city-only **Dojigiri Yasutsuna** | Ashen Wastes, then the Demon King |
+| Sakura Village | village | Bamboo Road: bandits, red oni, Kage Hideout |
+| Kawaguchi | village | Riverlands, Mist Fang Camp |
+| **Miyako, the Capital** | city (Forge of Masamune: **Kogarasu-maru**) | Capital Plains |
+| Ishiyama | village | Stone Pass, Iron Shadow Fort |
+| Tsukimura | village | Moonlit Forest |
+| **Kurogane Castle City** | city | Frost Pass: snow, frozen pines |
+| Yukimura | snowy village | Firefly Marsh, Black Lotus Stronghold |
+| Hotarumura | village | Iron Valley |
+| **Hagane, the Last Citadel** | city (Black Iron Forge: **Dojigiri Yasutsuna**) | Ashen Wastes, then the Demon King |
 
-Cities are walled, with gatehouses over the road, a castle keep, a five-storey pagoda, a market street, crowds, two shops and a magistrate or lord who gives advice.
+Three hidden hamlets sit at the end of side trails off the main road: Takenoko (bamboo grove), Kirigamine (snowy mountain) and Minato (fishing village). Each has its own shop and shrine.
+
+**Villages** have two rings of houses and white kura storehouses, a well, a bamboo fence, torii gates, lanterns and rice paddies.
+**Cities** are walled and laid out on a grid of paved streets you can walk, with lanterns at every crossing. Each has:
+- a market avenue;
+- a castle compound with an inner wall, a moat and an arched bridge;
+- a temple quarter with a hall and a five-storey pagoda;
+- a garden with a pond and bridge.
 
 Every shop also sells armor, charms, potions and six outfits: Wandering Ronin, Crimson Samurai, Shadow Ninja, White Wolf, Demon Hunter and Golden Shogun.
 

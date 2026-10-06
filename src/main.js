@@ -7,12 +7,12 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER, BOWS, STYLES,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
-  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK,
+  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK, FROST,
 } from './data.js';
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -152,6 +152,7 @@ const REST_ARM = -0.9;
 const wrist = (rig, target, k) => { rig.weapon.rotation.x = lerp(rig.weapon.rotation.x, target, k); };
 function restArm(rig, k = 0.2) {
   wrist(rig, rig.wristRest ?? 0, k);
+  if (rig.forearmR) { rig.forearmR.quaternion.slerp(_qId, k); rig.forearmL.quaternion.slerp(_qId, k); }
   rig.armR.rotation.x = lerp(rig.armR.rotation.x, REST_ARM, k);
   rig.armR.rotation.y = lerp(rig.armR.rotation.y, 0, k);
   rig.armR.rotation.z = lerp(rig.armR.rotation.z, 0, k);
@@ -162,31 +163,43 @@ function restArm(rig, k = 0.2) {
 }
 // Left hand reaches for the katana handle, so the sword is held two-handed.
 const _grip = new THREE.Vector3(), _sh = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+// Two-bone arm IK: put the hand on a world-space target by turning the shoulder and
+// bending the elbow. poleX pushes the elbow outward (negative for the left arm).
+const _S = new THREE.Vector3(), _T = new THREE.Vector3(), _E = new THREE.Vector3(), _u = new THREE.Vector3(), _pole = new THREE.Vector3(), _fd = new THREE.Vector3();
+const _qi = new THREE.Quaternion(), _qId = new THREE.Quaternion();
+const UPPER = 0.32, LOWER = 0.36;
+function armIK(rig, arm, fore, target, poleX) {
+  if (!fore) return;
+  rig.root.updateMatrixWorld(true);
+  rig.body.worldToLocal(_T.copy(target));
+  _S.copy(arm.position);
+  _u.subVectors(_T, _S);
+  const d = clamp(_u.length(), 0.1, UPPER + LOWER - 0.002);
+  _u.normalize();
+  const cosA = clamp((UPPER * UPPER + d * d - LOWER * LOWER) / (2 * UPPER * d), -1, 1);
+  const sinA = Math.sqrt(1 - cosA * cosA);
+  _pole.set(poleX, -1, -0.4);
+  _pole.addScaledVector(_u, -_pole.dot(_u)).normalize();
+  _E.copy(_S).addScaledVector(_u, cosA * UPPER).addScaledVector(_pole, sinA * UPPER);
+  arm.quaternion.setFromUnitVectors(_down, _fd.subVectors(_E, _S).normalize());
+  _qi.copy(arm.quaternion).invert();
+  fore.quaternion.setFromUnitVectors(_down, _fd.subVectors(_T, _E).normalize().applyQuaternion(_qi));
+}
 // While sheathed, the sword hand rests on the handle at the hip.
 function handOnHilt(rig) {
   if (!rig.sheathedHilt) return;
   rig.root.updateMatrixWorld(true);
   rig.sheathedHilt.localToWorld(_grip.set(0, 0.06, 0));
-  rig.body.worldToLocal(_grip);
-  _sh.copy(rig.armR.position);
-  _grip.sub(_sh);
-  const len = _grip.length();
-  _grip.normalize();
-  rig.armR.quaternion.setFromUnitVectors(_down, _grip);
-  // A bent elbow can't be modelled with one bone, so pull the shoulder in a little instead.
-  rig.armR.position.y = 0.82 - Math.max(0, 0.68 - len) * 0.3;
+  armIK(rig, rig.armR, rig.forearmR, _grip, 0.8);
 }
+// Left hand closes on the katana handle just below the right: a true two-handed grip.
 function twoHandGrip(rig) {
   if (!rig.twoHanded) return;
-  rig.armR.position.y = 0.82;
   const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined);
   if (!blade) return;
   rig.root.updateMatrixWorld(true);
-  blade.localToWorld(_grip.set(0, 0.14, 0));
-  rig.body.worldToLocal(_grip);
-  _sh.copy(rig.armL.position);
-  _grip.sub(_sh).normalize();
-  rig.armL.quaternion.setFromUnitVectors(_down, _grip);
+  blade.localToWorld(_grip.set(0, 0.15, 0));
+  armIK(rig, rig.armL, rig.forearmL, _grip, -0.8);
 }
 // Archer stance: bow arm out toward the target, string hand pulled back to the cheek.
 const _gp = new THREE.Vector3(), _nock = new THREE.Vector3();
@@ -200,11 +213,9 @@ function poseBow(armX, draw) {
   // Right hand: from the string at rest to full draw beside the face.
   const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
   _hand.set(_gp.x - fx * (0.12 + 0.62 * draw), _gp.y + 0.04 + (armX < -2 ? 0.5 : 0), _gp.z - fz * (0.12 + 0.62 * draw));
-  rig.body.worldToLocal(_grip.copy(_hand));
-  _grip.sub(rig.armR.position).normalize();
-  rig.armR.quaternion.setFromUnitVectors(_down, _grip);
+  armIK(rig, rig.armR, rig.forearmR, _hand, 1.0);
   rig.root.updateMatrixWorld(true);
-  rig.armR.localToWorld(_nock.set(0, -0.68, 0));
+  rig.forearmR.localToWorld(_nock.set(0, -0.36, 0));
   if (draw > 0.05) {
     setBowDraw(b, b.group.worldToLocal(_nock.clone()));
     b.arrow.visible = true;
@@ -224,6 +235,7 @@ function poseFeet(rig, s) {
 function poseAttack(rig, anim, t, A) {
   const s = smooth(A.hitAt - 0.09, A.hitAt + 0.05, t);
   const arm = rig.armR, body = rig.body;
+  if (rig.forearmR) rig.forearmR.quaternion.slerp(_qId, 0.5);
   const w = rig.weapon.rotation;
   if (anim === 'draw') { arm.rotation.set(lerp(-0.55, -1.5, s), lerp(-1.25, 1.45, s), 0); body.rotation.y = lerp(-0.6, 0.55, s); w.x = lerp(-1.4, -0.1, s); }
   else if (anim === 'slashA') { arm.rotation.set(-1.45, lerp(1.4, -1.5, s), 0); body.rotation.y = lerp(0.45, -0.5, s); w.x = lerp(-1.1, -0.15, s); }
@@ -241,6 +253,7 @@ function poseAttack(rig, anim, t, A) {
   }
 }
 function poseBlock(rig, k) {
+  if (rig.forearmR) rig.forearmR.quaternion.slerp(_qId, k);
   wrist(rig, -0.2, k);
   rig.armR.rotation.x = lerp(rig.armR.rotation.x, -1.55, k);
   rig.armR.rotation.y = lerp(rig.armR.rotation.y, -1.15, k);
@@ -597,6 +610,7 @@ function updateSpecial(dt) {
     }
     // Blade extended after the cut, body turned through it, deep lunge.
     R.armR.rotation.set(-1.5, -1.3, 0);
+    R.forearmR.quaternion.copy(_qId);
     R.weapon.rotation.x = -0.1;
     R.body.rotation.set(0.15, -0.5, 0);
     R.body.position.y = 0.88;
@@ -605,6 +619,7 @@ function updateSpecial(dt) {
     // Rise, turn the blade, and slowly slide it home. The click releases every cut.
     const k = smooth(0.1, 0.85, S.t);
     R.armR.rotation.set(lerp(-1.5, -0.6, k), lerp(-1.3, -1.2, k), 0);
+    R.forearmR.quaternion.slerp(_qId, 0.3);
     R.weapon.rotation.x = lerp(-0.1, -1.5, k);
     R.body.rotation.set(lerp(0.15, 0, k), lerp(-0.5, 0, k), 0);
     R.body.position.y = lerp(0.88, 1.0, k);
@@ -1020,6 +1035,7 @@ function updatePlayer(dt) {
     P.pos.x += dir.x * 4 * dt; P.pos.z += dir.z * 4 * dt;
     P.facing += dt * 22;
     rig.armR.rotation.set(-1.55, -0.6, 0);
+    rig.forearmR.quaternion.copy(_qId);
     rig.weapon.rotation.x = -0.1;
     rig.armL.rotation.set(-1.2, 0.8, 0);
     rig.body.rotation.x = 0.1;
@@ -1248,12 +1264,24 @@ function pickType(mix) {
   for (const [t, p] of mix) { if (pick < p) { type = t; break; } pick -= p; }
   return type;
 }
+// Which stretch of road (and so which region) a point is nearest to.
+function regionIndex(x, z) {
+  const seg = nearestSeg(x, z).index;
+  let r = 0;
+  for (let k = 0; k < TOWN_IDX.length; k++) if (seg >= TOWN_IDX[k]) r = k;
+  return r;
+}
+
 function spawnWorldEnemies() {
   for (let leg = 0; leg < REGIONS.length; leg++) {
-    const tier = REGIONS[leg].tier;
+    const tier = REGIONS[leg].tier, power = REGIONS[leg].power;
     const a = TOWN_IDX[leg], b = leg < TOWN_IDX.length - 1 ? TOWN_IDX[leg + 1] : PATH.length - 1;
     let groups = 0, tries = 0;
-    while (groups < 10 && tries++ < 400) {
+    // Longer legs get more roaming groups.
+    let legLen = 0;
+    for (let k = a; k < b; k++) legLen += Math.hypot(PATH[k + 1][0] - PATH[k][0], PATH[k + 1][1] - PATH[k][1]);
+    const want = Math.round(clamp(legLen / 24, 8, 16));
+    while (groups < want && tries++ < 500) {
       const k = a + Math.floor(wrand() * (b - a));
       const u = wrand();
       const [ax, az] = PATH[k], [bx, bz] = PATH[k + 1];
@@ -1264,7 +1292,7 @@ function spawnWorldEnemies() {
       if (cx < BOUNDS.minX + 10 || cx > BOUNDS.maxX - 10) continue;
       const type = pickType(TIER_MIX[tier]);
       const size = type === 'captain' ? 1 : 2 + Math.floor(wrand() * 2);
-      for (let s = 0; s < size; s++) createEnemy(s > 0 && type === 'captain' ? 'oni' : type, cx + wr(-4, 4), cz + wr(-4, 4));
+      for (let s = 0; s < size; s++) createEnemy(s > 0 && type === 'captain' ? 'oni' : type, cx + wr(-4, 4), cz + wr(-4, 4), { tier: power });
       groups++;
     }
   }
@@ -1272,15 +1300,16 @@ function spawnWorldEnemies() {
   NINJA_BASES.forEach((nb, i) => {
     for (let k = 0; k < 4 + i; k++) {
       const [x, z] = nb.spots[k % nb.spots.length];
-      createEnemy('ninja', x + wr(-1, 1), z + wr(-1, 1), { tier: i });
+      createEnemy('ninja', x + wr(-1, 1), z + wr(-1, 1), { tier: nb.power });
     }
-    nb.masterEnemy = createEnemy('ninjaMaster', nb.masterSpot[0], nb.masterSpot[1], { tier: i, role: 'master', base: nb, title: nb.master, facing: nb.gateDir });
+    nb.masterEnemy = createEnemy('ninjaMaster', nb.masterSpot[0], nb.masterSpot[1], { tier: nb.power, role: 'master', base: nb, title: nb.master, facing: nb.gateDir });
   });
   // Demon fortresses: one tier tougher than the region whose portal leads there.
   DEMON_BASES.forEach((db, i) => {
     const mix = TIER_MIX[Math.min(3, i + 1)];
-    db.spots.forEach(([x, z]) => createEnemy(pickType(mix), x, z, { tier: i }));
-    db.warlordEnemy = createEnemy('warlord', db.warlordSpot[0], db.warlordSpot[1], { tier: i, role: 'warlord', base: db, title: db.warlord, facing: 0 });
+    const pw = NINJA_BASES[i].power + 0.6;
+    db.spots.forEach(([x, z]) => createEnemy(pickType(mix), x, z, { tier: pw }));
+    db.warlordEnemy = createEnemy('warlord', db.warlordSpot[0], db.warlordSpot[1], { tier: pw, role: 'warlord', base: db, title: db.warlord, facing: 0 });
   });
   boss = createEnemy('boss', ARENA.x, ARENA.z - 10, { facing: 0, role: 'boss' });
 }
@@ -2199,6 +2228,13 @@ function drawMap(ctx, Wd, H, cx, cz, scale, full) {
   } else {
     ctx.fillStyle = 'rgba(70, 40, 35, 0.6)';
     ctx.fillRect(0, Z(ASH_Z), Wd, Math.max(0, Z(BOUNDS.minZ - 50) - Z(ASH_Z)));
+    ctx.fillStyle = 'rgba(220, 230, 240, 0.35)';
+    ctx.fillRect(0, Z(FROST.start), Wd, Z(FROST.end) - Z(FROST.start));
+    ctx.strokeStyle = '#a08a62'; ctx.lineWidth = full ? 2 : 1.5;
+    ctx.setLineDash([4, 3]);
+    for (const t of TOWNS) if (t.hamlet) { ctx.beginPath(); ctx.moveTo(X(t.attach[0]), Z(t.attach[1])); ctx.lineTo(X(t.x), Z(t.z)); ctx.stroke(); }
+    for (const nb of NINJA_BASES) { ctx.beginPath(); ctx.moveTo(X(nb.attach[0]), Z(nb.attach[1])); ctx.lineTo(X(nb.x), Z(nb.z)); ctx.stroke(); }
+    ctx.setLineDash([]);
     ctx.strokeStyle = '#c4a874'; ctx.lineWidth = full ? 4 : 3; ctx.lineJoin = 'round';
     ctx.beginPath();
     PATH.forEach(([x, z], i) => (i ? ctx.lineTo(X(x), Z(z)) : ctx.moveTo(X(x), Z(z))));
@@ -2285,13 +2321,11 @@ function updateWorldState(dt) {
     const i = DEMON_BASES.indexOf(realm);
     hud.locName.textContent = realm.name;
     hud.locSub.textContent = P.warlordsDead.includes(i) ? (P.chestsLooted.includes(i) ? 'Conquered' : 'The treasure awaits') : 'Danger ' + '★'.repeat(Math.min(5, i + 2));
-  } else if (t) { hud.locName.textContent = t.name; hud.locSub.textContent = t.city ? 'Walled city · market · forge · shrine' : 'Safe haven · shop · shrine'; }
+  } else if (t) { hud.locName.textContent = t.name; hud.locSub.textContent = t.city ? 'Walled city · market · forge · shrine' : t.hamlet ? 'Hidden hamlet · shop · shrine' : 'Safe haven · shop · shrine'; }
   else if (nb) { const i = NINJA_BASES.indexOf(nb); hud.locName.textContent = nb.name; hud.locSub.textContent = 'Ninja base · Danger ' + '★'.repeat(i + 1); }
   else if (arenaDist(P.pos.x, P.pos.z) < ARENA.r + 30) { hud.locName.textContent = 'Shrine of Oni Mountain'; hud.locSub.textContent = P.bossDead ? 'Peaceful at last' : 'Danger ★★★★★'; }
   else {
-    const seg = nearestSeg(P.pos.x, P.pos.z).index;
-    let tier = 0;
-    for (let k = 0; k < TOWN_IDX.length; k++) if (seg >= TOWN_IDX[k]) tier = k;
+    const tier = regionIndex(P.pos.x, P.pos.z);
     hud.locName.textContent = REGIONS[tier].name;
     hud.locSub.textContent = 'Danger ' + '★'.repeat(REGIONS[tier].danger);
   }
@@ -2311,7 +2345,10 @@ function updateWorldState(dt) {
   updateSky(camera.position, dt, skyTop, skyHor, sunCol, !!realm);
   refreshEnvironment(realm ? 'realm' : a > 0.5 ? 'ash' : 'day');
   scene.environmentIntensity = realm ? 0.5 : lerp(0.8, 0.55, a);
-  const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < ASH_Z ? 'ash' : P.pos.z > -620 || townAt(P.pos.x, P.pos.z) ? 'petals' : 'none';
+  const marsh = REGIONS[regionIndex(P.pos.x, P.pos.z)]?.name === 'Firefly Marsh';
+  const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < ASH_Z ? 'ash'
+    : frostAmt(P.pos.z) > 0.3 ? 'snow' : marsh ? 'fireflies'
+    : P.pos.z > -620 || townAt(P.pos.x, P.pos.z) ? 'petals' : 'none';
   updateAmbient(dt, _center.set(P.pos.x, P.y, P.pos.z), mode, time);
 
   const it = P.dead ? null : nearInteract();
@@ -2445,6 +2482,7 @@ window.__game = {
   renderer, P, enemies, TOWNS, interactables, NINJA_BASES, DEMON_BASES, projectiles,
   get boss() { return boss; }, get ui() { return ui; }, get gfxHigh() { return gfxHigh; },
   setCam(yaw, pitch, dist) { camYaw = yaw; camPitch = pitch; camDist = dist; },
+  unsheath,
 };
 
 const clock = new THREE.Clock();

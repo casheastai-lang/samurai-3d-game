@@ -2,12 +2,12 @@
 import * as THREE from 'three';
 import {
   PATH, ARENA, BOUNDS, TOWNS, TOWN_IDX, NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, REALM_X, ASH_Z,
-  LAKES, WATER_Y,
+  LAKES, WATER_Y, FROST, MAIN_TOWNS,
 } from './data.js';
 import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
   makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat, mergeStatic,
-  makeCastle, makePagoda, makeCityWall, makeGatehouse,
+  makeCastle, makePagoda, makeCityWall, makeGatehouse, makeKura, makeWell, makeFence, makeTempleHall, makeArchBridge,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
@@ -32,7 +32,42 @@ function nearestSeg(x, z) {
   }
   return { index: best, dist: bd };
 }
-const roadDist = (x, z) => nearestSeg(x, z).dist;
+// Side trails from the main road to the hamlets and ninja bases. They count as road
+// for flattening the ground and keeping trees off them.
+const TRAILS = [];
+function nearestPathPoint(x, z) {
+  let best = null, bd = Infinity;
+  for (let i = 0; i < PATH.length - 1; i++) {
+    const [ax, az] = PATH[i], [bx, bz] = PATH[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    const px = ax + dx * t, pz = az + dz * t, d = Math.hypot(px - x, pz - z);
+    if (d < bd) { bd = d; best = [px, pz]; }
+  }
+  return best;
+}
+for (const nb of NINJA_BASES) {
+  const p = nearestPathPoint(nb.x, nb.z), d = Math.hypot(p[0] - nb.x, p[1] - nb.z);
+  const ux = (p[0] - nb.x) / d, uz = (p[1] - nb.z) / d;
+  nb.gate = [nb.x + ux * NINJA_R, nb.z + uz * NINJA_R];
+  nb.gateDir = Math.atan2(ux, uz);
+  nb.attach = p;
+  TRAILS.push([nb.x, nb.z, p[0], p[1]]);
+}
+for (const t of TOWNS) {
+  if (!t.hamlet) continue;
+  t.attach = nearestPathPoint(t.x, t.z);
+  TRAILS.push([t.x, t.z, t.attach[0], t.attach[1]]);
+}
+function roadDist(x, z) {
+  let m = nearestSeg(x, z).dist;
+  for (const [ax, az, bx, bz] of TRAILS) m = Math.min(m, segDist(x, z, ax, az, bx, bz) + 1.5);
+  return m;
+}
+// 0 outside the Frost Pass, 1 in deep snow.
+function frostAmt(z) {
+  return smooth(FROST.start + 40, FROST.start - 40, z) * (1 - smooth(FROST.end + 40, FROST.end - 40, z));
+}
 // Distance to the edge of the nearest town or city (negative inside it).
 function townDist(x, z) {
   let m = Infinity;
@@ -151,6 +186,7 @@ function buildTerrain() {
   const plaza = new THREE.Color(0xb5a07a), ash = new THREE.Color(0x4a3a35), arenaC = new THREE.Color(0x341915), campC = new THREE.Color(0x6a5a44);
   const rock = new THREE.Color(0x7a756c), snow = new THREE.Color(0xeeeef4), c = new THREE.Color();
   const sand = new THREE.Color(0xa8946a), mud = new THREE.Color(0x3a3424), paving = new THREE.Color(0x8e887c);
+  const snowGround = new THREE.Color(0xdfe6ec);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const h = height(x, z);
@@ -158,6 +194,7 @@ function buildTerrain() {
     const n = Math.sin(x * 0.13) * Math.cos(z * 0.11) * 0.5 + 0.5 + (wrand() - 0.5) * 0.25;
     c.copy(g1).lerp(g2, clamp(n, 0, 1));
     c.lerp(ash, smooth(ASH_Z + 40, ASH_Z - 70, z) * 0.85);
+    c.lerp(snowGround, frostAmt(z) * 0.85);
     c.lerp(dirt, (1 - smooth(2.5, 5, roadDist(x, z))) * 0.85);
     const td = townDist(x, z);
     c.lerp(plaza, (1 - smooth(-4, 2, td)) * 0.7);
@@ -198,32 +235,24 @@ function buildTerrain() {
     scene.add(j);
   }
 
-  // Side trails from the road to each ninja base gate.
-  for (const nb of NINJA_BASES) {
-    let best = null, bd = Infinity;
-    for (let i = 0; i < PATH.length - 1; i++) {
-      const [ax, az] = PATH[i], [bx, bz] = PATH[i + 1];
-      const dx = bx - ax, dz = bz - az;
-      const t = clamp(((nb.x - ax) * dx + (nb.z - az) * dz) / (dx * dx + dz * dz), 0, 1);
-      const px = ax + dx * t, pz = az + dz * t, d = Math.hypot(px - nb.x, pz - nb.z);
-      if (d < bd) { bd = d; best = [px, pz]; }
-    }
-    const ux = (best[0] - nb.x) / bd, uz = (best[1] - nb.z) / bd;
-    nb.gate = [nb.x + ux * NINJA_R, nb.z + uz * NINJA_R];
-    nb.gateDir = Math.atan2(ux, uz);
-    const steps = Math.ceil(bd / 4);
-    const trailMat = new THREE.MeshLambertMaterial({ color: 0x9c8462, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  // Side trails to the hamlets and ninja bases, merged into one mesh.
+  const trailGroup = new THREE.Group();
+  const trailMat = new THREE.MeshLambertMaterial({ color: 0x9c8462, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  for (const [ax, az, bx, bz] of TRAILS) {
+    const len = Math.hypot(bx - ax, bz - az), steps = Math.ceil(len / 4);
     for (let k = 0; k < steps; k++) {
-      const t0 = k / steps, t1 = (k + 1) / steps;
-      const x0 = lerp(nb.x, best[0], t0), z0 = lerp(nb.z, best[1], t0), x1 = lerp(nb.x, best[0], t1), z1 = lerp(nb.z, best[1], t1);
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(2.6, Math.hypot(x1 - x0, z1 - z0) + 0.3).rotateX(-Math.PI / 2), trailMat);
+      const x0 = lerp(ax, bx, k / steps), z0 = lerp(az, bz, k / steps), x1 = lerp(ax, bx, (k + 1) / steps), z1 = lerp(az, bz, (k + 1) / steps);
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(3.2, Math.hypot(x1 - x0, z1 - z0) + 0.3).rotateX(-Math.PI / 2), trailMat);
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
       m.position.set(mx, height(mx, mz) + 0.08, mz);
       m.rotation.y = Math.atan2(x1 - x0, z1 - z0);
       m.receiveShadow = true;
-      scene.add(m);
+      m.castShadow = false;
+      trailGroup.add(m);
     }
   }
+  scene.add(trailGroup);
+  mergeStatic(trailGroup);
 }
 
 // ============================================================ Static colliders (grid)
@@ -277,7 +306,8 @@ function buildVegetation() {
   const okSpot = (x, z, margin = 0) => roadDist(x, z) > 7 + margin && townDist(x, z) > 3
     && arenaDist(x, z) > ARENA.r + 6 && ninjaDist(x, z) > NINJA_R + 5 && lakeDist(x, z) > 3 && height(x, z) < 40;
 
-  for (let i = 0; i < 9000; i++) {
+  const attempts = Math.round(9000 * (BOUNDS.maxZ - BOUNDS.minZ) / 1090);
+  for (let i = 0; i < attempts; i++) {
     const x = wr(BOUNDS.minX - 50, BOUNDS.maxX + 50), z = wr(BOUNDS.minZ - 50, BOUNDS.maxZ + 60);
     if (!okSpot(x, z)) continue;
     const inBounds = x > BOUNDS.minX && x < BOUNDS.maxX && z > BOUNDS.minZ && z < BOUNDS.maxZ;
@@ -285,7 +315,7 @@ function buildVegetation() {
     if (z < ASH_Z + 20) {
       if (r < 0.12) { place(sets.dead, x, z, wr(0.8, 1.4)); if (inBounds) addCollider(x, z, 0.5); }
       else if (r < 0.2) { place(sets.rock, x, z, wr(0.6, 2.2)); if (inBounds) addCollider(x, z, 1.0); }
-    } else if (townDist(x, z) < 50 && r < 0.12) {
+    } else if (townDist(x, z) < 50 && r < 0.12 && frostAmt(z) < 0.3) {
       place(sets.sakura, x, z, wr(0.8, 1.2)); if (inBounds) addCollider(x, z, 0.5);
     } else if (z < -20 && z > -240 && r < 0.05) {
       for (let k = 0; k < 9; k++) {
@@ -325,7 +355,9 @@ function buildVegetation() {
     const r = 2.3 - k * 0.38, h = 2.4 - k * 0.2;
     pineTiers.push(lumpy(new THREE.ConeGeometry(r, h, 14, 3, true), 0.22, 7 + k).translate(0, 2.6 + k * 1.05, 0));
   }
-  inst(mergeGeos(pineTiers), leaves(0.18, 0.08), sets.pine, true, vary(0x2c5228, 0.12));
+  // Pines in the Frost Pass carry snow.
+  const pineTint = vary(0x2c5228, 0.12), snowWhite = new THREE.Color(0xeef2f6);
+  inst(mergeGeos(pineTiers), leaves(0.18, 0.08), sets.pine, true, (c, i) => { pineTint(c, i); c.lerp(snowWhite, frostAmt(sets.pine[i].elements[14]) * 0.6); });
   // Cherry blossom: twisted trunk, crown of pink clusters.
   inst(new THREE.CylinderGeometry(0.2, 0.36, 3.2, 12).translate(0, 1.6, 0), bark(0x6a4a42, 1, 2), sets.sakura);
   const blossoms = [];
@@ -489,8 +521,15 @@ function placeObj(obj, x, z, ry, merge = true) {
 const facing = (fx, fz, tx, tz) => Math.atan2(tx - fx, tz - fz);
 
 function buildTown(t) {
-  const i = TOWN_IDX[t.index];
-  const prev = PATH[i - 1], next = PATH[i + 1];
+  let prev, next;
+  if (t.hamlet) {
+    // Hamlets face down their trail toward the main road.
+    prev = t.attach;
+    next = [t.x * 2 - t.attach[0], t.z * 2 - t.attach[1]];
+  } else {
+    const i = TOWN_IDX[t.index];
+    prev = PATH[i - 1]; next = PATH[i + 1];
+  }
   let dx = next[0] - prev[0], dz = next[1] - prev[1];
   const dl = Math.hypot(dx, dz); dx /= dl; dz /= dl;
   const px = -dz, pz = dx;
@@ -534,10 +573,10 @@ function buildTown(t) {
 
   const keepClear = [[...at(0, 12), 8], [...at(-9, 12), 8], [hx, hz, 8], [ex, ez, 4]];
   if (t.city) buildCity(t, dx, dz, px, pz, at, keepClear);
-  else buildVillage(t, prev, next, keepClear);
+  else buildVillage(t, prev, next, keepClear, at);
 
   // Townsfolk wandering the streets.
-  const crowd = t.city ? 14 : 4;
+  const crowd = t.city ? 18 : t.hamlet ? 3 : 5;
   for (let k = 0; k < crowd; k++) {
     const rig = makeHumanoid({
       cloth: VILLAGER_COLORS[(k + t.index * 2) % VILLAGER_COLORS.length], cloth2: 0x3a3430,
@@ -551,15 +590,18 @@ function buildTown(t) {
 }
 
 // Houses in one merged block: dozens of houses cost a handful of draw calls.
+// Each spot is [x, z, variant, tall, facingAngle?]. Roughly one in five is a white kura.
 function houseBlock(t, spots) {
   const block = new THREE.Group();
   const sizes = [[5, 4], [6, 4.5], [4.5, 4]];
-  for (const [x, z, k, tall] of spots) {
-    const [w, d] = sizes[k % sizes.length];
-    const h = makeHouse(k % 4 === 3 ? 0xf4eee0 : t.wall, t.roof, w, d);
+  const roof = t.snow ? 0xdfe6ee : t.roof;
+  for (const [x, z, k, tall, ang] of spots) {
+    const kura = k % 5 === 2;
+    const [w, d] = kura ? [4, 3.2] : sizes[k % sizes.length];
+    const h = kura ? makeKura(roof) : makeHouse(k % 4 === 3 ? 0xf4eee0 : t.wall, roof, w, d);
     h.position.set(x, height(x, z), z);
-    h.rotation.y = facing(x, z, t.x, t.z);
-    if (tall) h.scale.y = 1.3;
+    h.rotation.y = ang ?? facing(x, z, t.x, t.z);
+    if (tall && !kura) h.scale.y = 1.3;
     block.add(h);
     addCollider(x, z, Math.max(w, d) * 0.62);
   }
@@ -567,17 +609,96 @@ function houseBlock(t, spots) {
   mergeStatic(block);
 }
 
-function buildVillage(t, prev, next, keepClear) {
+// Rice paddies: flooded fields with earthen banks and rows of rice, collected for
+// instancing once every village has placed its fields.
+const riceSpots = [];
+const paddyWater = new THREE.MeshStandardMaterial({ color: 0x4e5e3c, roughness: 0.12, metalness: 0.0 });
+function paddies(t, count) {
+  const g = new THREE.Group();
+  const bank = smat(0x6a5a3e, { roughness: 1 });
+  let placed = 0;
+  for (let k = 0; k < 40 && placed < count; k++) {
+    const a = wr(0, Math.PI * 2), d = t.r + wr(8, 22);
+    const x = t.x + Math.cos(a) * d, z = t.z + Math.sin(a) * d;
+    if (roadDist(x, z) < 10 || lakeDist(x, z) < 8 || ninjaDist(x, z) < NINJA_R + 10 || townDist(x, z) < 5) continue;
+    if (Math.abs(height(x, z)) > 0.8 || Math.abs(height(x + 5, z) - height(x - 5, z)) > 0.6) continue;
+    const y = height(x, z);
+    const p = new THREE.Group();
+    p.position.set(x, y, z);
+    p.rotation.y = a;
+    const W = 10, D = 7;
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(W, D).rotateX(-Math.PI / 2), paddyWater);
+    water.position.y = 0.14; water.receiveShadow = true;
+    p.add(water);
+    for (const [bx, bz, bw, bd] of [[0, D / 2, W + 0.5, 0.5], [0, -D / 2, W + 0.5, 0.5], [W / 2, 0, 0.5, D], [-W / 2, 0, 0.5, D]]) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.4, bd), bank);
+      m.position.set(bx, 0.1, bz); m.receiveShadow = true;
+      p.add(m);
+    }
+    g.add(p);
+    p.updateMatrixWorld(true);
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 6; j++) {
+      const v = new THREE.Vector3(-W / 2 + 0.9 + i * 1.03, 0.1, -D / 2 + 0.8 + j * 1.08).applyMatrix4(p.matrixWorld);
+      riceSpots.push(v);
+    }
+    placed++;
+  }
+  scene.add(g);
+  mergeStatic(g);
+}
+function plantRice() {
+  const dummy = new THREE.Object3D(), mats = [];
+  for (const v of riceSpots) {
+    dummy.position.copy(v);
+    dummy.rotation.set(0, wr(0, 6), 0);
+    dummy.scale.setScalar(wr(0.8, 1.15));
+    dummy.updateMatrix();
+    mats.push(dummy.matrix.clone());
+  }
+  const tuft = mergeGeos([0, 1, 2, 3].map(k => new THREE.ConeGeometry(0.03, 0.75, 3).translate(Math.cos(k * 1.6) * 0.06, 0.37, Math.sin(k * 1.6) * 0.06).rotateZ((k - 1.5) * 0.12)));
+  const mat = new THREE.MeshLambertMaterial({ color: 0x8aa848 });
+  addWind(mat, 0.25, 0.4);
+  chunkedInstances(tuft, mat, mats, { cell: 96, range: 150, shadow: false });
+}
+
+function buildVillage(t, prev, next, keepClear, at) {
+  // A well in the plaza.
+  const [wx, wz] = at(-8, 5);
+  placeObj(makeWell(), wx, wz, 0);
+  addCollider(wx, wz, 1.1);
+  keepClear.push([wx, wz, 5]);
+  // Two rings of houses and storehouses.
   const spots = [];
-  const n = 14;
-  for (let k = 0; k < n; k++) {
-    const a = (k / n) * Math.PI * 2 + wr(-0.1, 0.1);
-    const rr = wr(19, 25);
-    const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
-    if (roadDist(x, z) < 7.5 || keepClear.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r)) continue;
-    spots.push([x, z, k, false]);
+  const rings = t.hamlet ? [[16, 9]] : [[18, 12], [25.5, 16]];
+  let k = 0;
+  for (const [rr, n] of rings) {
+    for (let j = 0; j < n; j++, k++) {
+      const a = (j / n) * Math.PI * 2 + rr * 0.21 + wr(-0.06, 0.06);
+      const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
+      if (roadDist(x, z) < 7.5 || keepClear.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r)) continue;
+      spots.push([x, z, k, rr < 20 && wrand() < 0.25]);
+    }
   }
   houseBlock(t, spots);
+
+  // Bamboo fence around the edge, open where roads and trails come in.
+  const fence = new THREE.Group();
+  const N = Math.round((2 * Math.PI * t.r) / 5);
+  const seg = (2 * Math.PI * t.r) / N;
+  for (let j = 0; j < N; j++) {
+    const a = (j / N) * Math.PI * 2;
+    const x = t.x + Math.cos(a) * (t.r - 1), z = t.z + Math.sin(a) * (t.r - 1);
+    if (roadDist(x, z) < 6) continue;
+    const f = makeFence(seg * 0.95);
+    f.position.set(x, height(x, z), z);
+    f.rotation.y = -a + Math.PI / 2;
+    fence.add(f);
+    const tx = -Math.sin(a), tz = Math.cos(a);
+    addCollider(x + tx * seg / 4, z + tz * seg / 4, seg / 4);
+    addCollider(x - tx * seg / 4, z - tz * seg / 4, seg / 4);
+  }
+  scene.add(fence);
+  mergeStatic(fence);
 
   // Torii gates where the road enters and leaves the village.
   for (const p of [prev, next]) {
@@ -593,22 +714,27 @@ function buildVillage(t, prev, next, keepClear) {
       addCollider(lx, lz, 0.5);
     }
   }
+  if (!t.snow) paddies(t, t.hamlet ? 3 : 6);
 }
 
-// A walled city: gatehouses on the road, a castle keep, a pagoda, a market street,
-// and rings of houses filling the districts.
+// A walled city laid out on a grid of paved streets. In the city's own frame, u runs
+// along the main road and v across it; streets lie every 24 m in both directions.
+// Special quarters replace some blocks: the castle compound behind its moat, the
+// temple quarter, and a garden with a pond and arched bridge.
 function buildCity(t, dx, dz, px, pz, at, keepClear) {
-  const R = t.r;
-  // Landmarks on either side of the main street.
-  const [cx, cz] = at(-8, R * 0.52);
-  placeObj(makeCastle(t.roof), cx, cz, facing(cx, cz, t.x, t.z));
-  addCollider(cx, cz, 12.5);
-  const [gx2, gz2] = at(18, -R * 0.5);
-  placeObj(makePagoda(t.roof), gx2, gz2, 0.3);
-  addCollider(gx2, gz2, 5);
-  keepClear.push([cx, cz, 20], [gx2, gz2, 10]);
+  const R = t.r, STEP = 24, LINES = [-48, -24, 0, 24, 48];
+  const toWorld = (u, v) => at(u, v);
+  const ang = (fu, fv) => Math.atan2(dx * fu + px * fv, dz * fu + pz * fv);
+  const zones = [
+    { name: 'castle', u0: -24, u1: 24, v0: 24, v1: 72 },
+    { name: 'temple', u0: 0, u1: 48, v0: -72, v1: -24 },
+    { name: 'garden', u0: -48, u1: -24, v0: -48, v1: -24 },
+  ];
+  const inZone = (u, v) => zones.find(z => u > z.u0 + 0.1 && u < z.u1 - 0.1 && v > z.v0 + 0.1 && v < z.v1 - 0.1);
+  const inside = (u, v, m) => Math.hypot(u, v) < R - m;
+  for (const z of zones) { const [x, zz] = toWorld((z.u0 + z.u1) / 2, (z.v0 + z.v1) / 2); keepClear.push([x, zz, 12]); }
 
-  // City wall with gatehouses where the road passes through.
+  // ---- City wall and gatehouses.
   const wall = new THREE.Group();
   const N = 50, segLen = (2 * Math.PI * R) / N;
   for (let k = 0; k < N; k++) {
@@ -635,45 +761,177 @@ function buildCity(t, dx, dz, px, pz, at, keepClear) {
     addCollider(gx + oz * 6.8, gz - ox * 6.8, 3.2);
   }
 
-  // Market street: stalls and lanterns lining the road through the city.
+  // ---- Paved streets (the main avenue is the road itself) and lanterns at crossings.
+  const streets = new THREE.Group();
+  const paveTex = tmat('stone', 0xa8a296, 1, 1);
+  const addStreet = (u0, v0, u1, v1, w) => {
+    const [x0, z0] = toWorld(u0, v0), [x1, z1] = toWorld(u1, v1);
+    const len = Math.hypot(x1 - x0, z1 - z0);
+    const geo = new THREE.PlaneGeometry(w, len + w).rotateX(-Math.PI / 2);
+    const uv = geo.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * w / 3, uv.getY(k) * (len + w) / 3);
+    const m = new THREE.Mesh(geo, paveTex);
+    m.position.set((x0 + x1) / 2, 0.06, (z0 + z1) / 2);
+    m.rotation.y = Math.atan2(x1 - x0, z1 - z0);
+    m.receiveShadow = true;
+    streets.add(m);
+  };
+  for (const c of LINES) {
+    for (let s0 = -72; s0 < 72; s0 += STEP) {
+      // Avenue along u at v = c, and cross street along v at u = c.
+      for (const [u0, v0, u1, v1] of [[s0, c, s0 + STEP, c], [c, s0, c, s0 + STEP]]) {
+        if (c === 0 && v0 === v1) continue;
+        const mu = (u0 + u1) / 2, mv = (v0 + v1) / 2;
+        if (!inside(mu, mv, 8) || inZone(mu, mv)) continue;
+        addStreet(u0, v0, u1, v1, 5);
+      }
+    }
+  }
+  scene.add(streets);
+  mergeStatic(streets);
+  const lamps = new THREE.Group();
+  for (const u of LINES) for (const v of LINES) {
+    if (!inside(u, v, 10) || (u === 0 && Math.abs(v) < 12)) continue;
+    const [x, z] = toWorld(u + 3.3, v + 3.3);
+    if (keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r * 0.6)) continue;
+    const l = makeStoneLantern(true);
+    l.position.set(x, 0, z);
+    lamps.add(l);
+    addCollider(x, z, 0.5);
+  }
+  scene.add(lamps);
+  mergeStatic(lamps);
+
+  // ---- Market stalls along the main avenue.
   const street = new THREE.Group();
   const stallColors = [0x7a2a1a, 0x24467a, 0x2a6a4a, 0x6a2a5a, 0x8a6a1a];
   for (let f = -R + 14, k = 0; f < R - 12; f += 10, k++) {
-    if (Math.abs(f) < 16) continue;
+    if (Math.abs(f) < 16 || LINES.some(l => Math.abs(f - l) < 4)) continue;
     for (const sd of [-1, 1]) {
       const [x, z] = at(f, sd * 7.5);
-      if (keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
-      if ((k + (sd > 0 ? 1 : 0)) % 2 === 0) {
-        const st = makeShopStall(stallColors[(k + sd + 5) % stallColors.length]);
-        st.position.set(x, height(x, z), z);
-        st.rotation.y = Math.atan2(-px * sd, -pz * sd);
-        street.add(st);
-        addCollider(x, z, 2.3);
-      } else {
-        const l = makeStoneLantern(true);
-        l.position.set(x, height(x, z), z);
-        street.add(l);
-        addCollider(x, z, 0.5);
-      }
+      if (keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r) || inZone(f, sd * 7.5)) continue;
+      const st = makeShopStall(stallColors[(k + sd + 5) % stallColors.length]);
+      st.position.set(x, height(x, z), z);
+      st.rotation.y = Math.atan2(-px * sd, -pz * sd);
+      street.add(st);
+      addCollider(x, z, 2.3);
     }
   }
   scene.add(street);
   mergeStatic(street);
 
-  // Districts: rings of houses, keeping the main street and landmarks clear.
+  // ---- City blocks: four lots per block, each house facing a street.
   const spots = [];
   let k = 0;
-  for (let rr = 20; rr < R - 7; rr += 10.5) {
-    const n = Math.floor((2 * Math.PI * rr) / 10.5);
-    for (let j = 0; j < n; j++) {
-      const a = (j / n) * Math.PI * 2 + (rr * 0.37) + wr(-0.03, 0.03);
-      const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
+  for (let u0 = -72; u0 < 72; u0 += STEP) for (let v0 = -72; v0 < 72; v0 += STEP) {
+    const cu = u0 + STEP / 2, cv = v0 + STEP / 2;
+    if (inZone(cu, cv) || !inside(cu, cv, 10)) continue;
+    for (const su of [-1, 1]) for (const sv of [-1, 1]) {
+      const lu = cu + su * 5.6, lv = cv + sv * 5.6;
       k++;
-      if (roadDist(x, z) < 11 || keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
-      spots.push([x, z, k, wrand() < 0.3]);
+      if (Math.abs(lv) < 10.5 || !inside(lu, lv, 8)) continue;
+      const [x, z] = toWorld(lu, lv);
+      if (keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
+      const faceU = (k % 2 === 0);
+      spots.push([x, z, k, wrand() < 0.35, faceU ? ang(su, 0) : ang(0, sv)]);
     }
   }
   houseBlock(t, spots);
+
+  // ---- Castle compound: keep, inner wall, moat ring and a bridge toward the avenue.
+  const [cx, cz] = toWorld(0, 48);
+  placeObj(makeCastle(t.roof), cx, cz, ang(0, -1));
+  addCollider(cx, cz, 12.5);
+  const compound = new THREE.Group();
+  const moatMat = new THREE.MeshStandardMaterial({ color: 0x1e3a40, roughness: 0.06, metalness: 0 });
+  const moat = new THREE.Mesh(new THREE.RingGeometry(19, 23, 48).rotateX(-Math.PI / 2), moatMat);
+  moat.position.set(cx, 0.07, cz);
+  compound.add(moat);
+  const edgeMat = tmat('stone', 0xb0aa9e, 8, 0.3);
+  for (const r of [18.8, 23.2]) {
+    const edge = new THREE.Mesh(new THREE.TorusGeometry(r, 0.35, 6, 48).rotateX(Math.PI / 2), edgeMat);
+    edge.position.set(cx, 0.15, cz);
+    compound.add(edge);
+  }
+  const bridgeAng = ang(0, -1);
+  const NI = 30;
+  for (let j = 0; j < NI; j++) {
+    const a = (j / NI) * Math.PI * 2;
+    // Leave a gap in the inner wall and the moat where the bridge crosses.
+    const wx = Math.sin(a), wz = Math.cos(a);
+    const gapDot = wx * Math.sin(bridgeAng) + wz * Math.cos(bridgeAng);
+    const x = cx + wx * 17, z = cz + wz * 17;
+    if (gapDot < 0.94) {
+      const w = makeCityWall((2 * Math.PI * 17) / NI, t.roof);
+      w.scale.set(1, 0.65, 0.7);
+      w.position.set(x, 0, z);
+      w.rotation.y = a;
+      compound.add(w);
+      addCollider(x, z, 2);
+    }
+    if (gapDot < 0.97) addCollider(cx + wx * 21, cz + wz * 21, 2.2);
+  }
+  const bridge = makeArchBridge(9, 3);
+  bridge.position.set(cx + Math.sin(bridgeAng) * 21, 0, cz + Math.cos(bridgeAng) * 21);
+  bridge.rotation.y = bridgeAng;
+  compound.add(bridge);
+  scene.add(compound);
+  mergeStatic(compound);
+
+  // ---- Temple quarter: torii, lantern path, temple hall and pagoda.
+  const temple = new THREE.Group();
+  const [hx, hz] = toWorld(24, -46);
+  const hall = makeTempleHall(t.roof);
+  hall.position.set(hx, 0, hz);
+  hall.rotation.y = ang(0, 1);
+  temple.add(hall);
+  addCollider(hx, hz, 8);
+  const [gx, gz] = toWorld(24, -27);
+  const torii = makeTorii(1.2, 0xc0392b);
+  torii.position.set(gx, 0, gz);
+  torii.rotation.y = ang(0, 1);
+  temple.add(torii);
+  for (const [lu, lv] of [[19, -31], [29, -31], [19, -35], [29, -35]]) {
+    const [x, z] = toWorld(lu, lv);
+    const l = makeStoneLantern(true); l.position.set(x, 0, z); temple.add(l);
+    addCollider(x, z, 0.5);
+  }
+  scene.add(temple);
+  mergeStatic(temple);
+  const [ptx, ptz] = toWorld(42, -36);
+  placeObj(makePagoda(t.roof), ptx, ptz, 0.3);
+  addCollider(ptx, ptz, 5);
+
+  // ---- Garden: a pond with an arched bridge, cherry trees and stones.
+  const garden = new THREE.Group();
+  const [ox, oz] = toWorld(-36, -36);
+  const pond = new THREE.Mesh(new THREE.CircleGeometry(7, 32).rotateX(-Math.PI / 2), moatMat);
+  pond.position.set(ox, 0.08, oz);
+  garden.add(pond);
+  const pondEdge = new THREE.Mesh(new THREE.TorusGeometry(7.1, 0.4, 6, 32).rotateX(Math.PI / 2), edgeMat);
+  pondEdge.position.set(ox, 0.15, oz);
+  garden.add(pondEdge);
+  const gb = makeArchBridge(13, 2.4);
+  gb.position.set(ox, 0, oz);
+  gb.rotation.y = ang(1, 0);
+  garden.add(gb);
+  const bark = smat(0x4a3028), bloom = smat(0xf2a7c3);
+  for (const [tu, tv] of [[-45, -28], [-27, -45], [-44, -44], [-28, -28]]) {
+    const [x, z] = toWorld(tu, tv);
+    const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.3, 2.8, 8), bark); tr.position.set(x, 1.4, z); tr.castShadow = true;
+    const bl = new THREE.Mesh(lumpy(new THREE.SphereGeometry(1.9, 12, 9), 0.3, x), bloom); bl.position.set(x, 3.6, z); bl.castShadow = true;
+    garden.add(tr, bl);
+    addCollider(x, z, 0.5);
+  }
+  scene.add(garden);
+  mergeStatic(garden);
+  // Pond banks: walk around it or over the bridge.
+  for (let j = 0; j < 12; j++) {
+    const a = (j / 12) * Math.PI * 2;
+    const bx = Math.sin(a), bz = Math.cos(a);
+    if (Math.abs(bx * Math.sin(ang(1, 0)) + bz * Math.cos(ang(1, 0))) > 0.9) continue;
+    addCollider(ox + bx * 4.5, oz + bz * 4.5, 2.6);
+  }
 }
 
 function buildArena() {
@@ -732,9 +990,10 @@ function buildGrass() {
   for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
   const mats = [];
   const dummy = new THREE.Object3D();
-  for (let i = 0; i < 560000 && mats.length < 170000; i++) {
+  for (let i = 0; i < 900000 && mats.length < 260000; i++) {
     const x = wr(BOUNDS.minX, BOUNDS.maxX), z = wr(ASH_Z + 30, BOUNDS.maxZ);
     if (roadDist(x, z) < 3.5 || townDist(x, z) < -3 || ninjaDist(x, z) < NINJA_R || arenaDist(x, z) < ARENA.r + 4 || lakeDist(x, z) < 0) continue;
+    if (frostAmt(z) > 0.25) continue;
     const h = height(x, z);
     if (h > 9) continue;
     dummy.position.set(x, h - 0.05, z);
@@ -1025,12 +1284,13 @@ function buildWorld(sc) {
   buildGrass();
   buildLakes();
   TOWNS.forEach(buildTown);
+  plantRice();
   buildArena();
   NINJA_BASES.forEach(buildNinjaBase);
   DEMON_BASES.forEach(buildDemonBase);
 }
 
 export {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, ninjaPortals, segDist,
 };

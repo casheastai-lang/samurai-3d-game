@@ -201,6 +201,8 @@ const AMB_MODES = {
   petals: { color: 0xffb7d0, size: 0.22, fall: -0.8, drift: 1.2, blend: THREE.NormalBlending },
   embers: { color: 0xff7a2a, size: 0.2, fall: 1.4, drift: 0.8, blend: THREE.AdditiveBlending },
   ash:    { color: 0x9a8f88, size: 0.18, fall: -0.4, drift: 0.6, blend: THREE.NormalBlending },
+  snow:   { color: 0xf4f8ff, size: 0.16, fall: -1.6, drift: 0.9, blend: THREE.NormalBlending },
+  fireflies: { color: 0xd8ff6a, size: 0.14, fall: 0.05, drift: 0.7, blend: THREE.AdditiveBlending },
   none:   null,
 };
 export function updateAmbient(dt, center, mode, time) {
