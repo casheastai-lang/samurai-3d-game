@@ -217,3 +217,26 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
 .stylecard em { display: block; font-size: 12px; font-style: normal; color: var(--gold); margin-top: 3px; }
 .stylecard.on { background: #6e1d16; border-color: #c0392b; }
 .stylecard.on span { color: #f0dcd0; }
+
+/* ---------- New life: quest tracker and village choice ---------- */
+#quest {
+  position: fixed; top: 208px; right: 16px; width: 240px; padding: 10px 12px;
+  background: rgba(12, 10, 9, 0.62); border: 1px solid var(--el, var(--edge)); border-left-width: 4px; border-radius: 6px;
+  font-size: 13px; text-shadow: 0 1px 2px #000;
+}
+#quest .qage { color: var(--el, var(--gold)); font-weight: 700; font-size: 12px; letter-spacing: 1px; margin-bottom: 4px; }
+#quest b { display: block; font-size: 15px; }
+#quest span { display: block; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+.villages { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+.village {
+  display: grid; grid-template-columns: 44px 1fr; column-gap: 12px; text-align: left; padding: 10px 12px;
+  background: #2a2420; border-color: var(--el); border-left-width: 4px;
+}
+.village:hover:not(:disabled) { background: #3a322b; }
+.village i { grid-row: span 3; font-style: normal; font-size: 34px; line-height: 44px; text-align: center; color: var(--el); }
+.village b { font-size: 16px; color: var(--el); }
+.village span { font-size: 13px; font-weight: 500; color: var(--ink); }
+.village em { font-size: 12px; font-style: normal; color: var(--gold); margin-top: 2px; }
+@media (max-width: 720px) {
+  #quest { top: auto; bottom: 150px; right: 8px; width: 200px; }
+}

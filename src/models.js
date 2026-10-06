@@ -545,6 +545,13 @@ export function makeOni(o = {}) {
   return rig;
 }
 
+const SPIRIT_LOOK = {
+  shadow: { skin: 0x3a2a52, hair: 0x120a1e, eyes: 0xd0a0ff, horn: 0x6a5a8a },
+  fire:   { skin: 0xd8501a, hair: 0x3a0a04, eyes: 0xfff080, horn: 0x2a1a14 },
+  golden: { skin: 0xc89a2a, hair: 0x5a3a0a, eyes: 0xffffff, horn: 0xfff0b0 },
+  ice:    { skin: 0x8ac8e8, hair: 0xeef6ff, eyes: 0x40a0ff, horn: 0xffffff },
+  water:  { skin: 0x2a7a8a, hair: 0x0a3040, eyes: 0xa0fff0, horn: 0xd0e8e0 },
+};
 export function makeEnemyModel(type, scale) {
   switch (type) {
     case 'ninja': return makeHumanoid({ cloth: 0x1b1b21, cloth2: 0x121216, hat: 'ninja', scarf: 0x8a1010, weapon: 'blade', scale, skin: 0xc99a72 });
@@ -555,6 +562,13 @@ export function makeEnemyModel(type, scale) {
     case 'blueOni': return makeOni({ skin: 0x2f5fa8, scale, horn: 0xd8c27a, single: true });
     case 'captain': return makeOni({ skin: 0x2a2526, scale, hair: 0x5a0d0d, eyes: 0xff3322, horn: 0xc9a227, cape: 0x5a0d0d, clubLen: 1.2 });
     case 'boss': return makeOni({ skin: 0x6a1010, scale, hair: 0x0c0606, eyes: 0xfff2a0, horn: 0xd4af37, cape: 0x111111, clubLen: 1.35, single: true });
+    case 'echo': return makeOni({ skin: 0x2a1a3a, scale, hair: 0x0a0612, eyes: 0xc89aff, horn: 0x8a7ab0, cape: 0x1a0a2a, clubLen: 1.35, single: true });
+  }
+  // Elemental spirits of the new world: small imps and full-grown oni.
+  const el = /^(imp|beast)_(\w+)$/.exec(type);
+  if (el && SPIRIT_LOOK[el[2]]) {
+    const L = SPIRIT_LOOK[el[2]];
+    return makeOni({ skin: L.skin, scale, hair: L.hair, eyes: L.eyes, horn: L.horn, cape: el[1] === 'beast' ? L.hair : undefined, single: el[1] === 'imp', clubLen: el[1] === 'imp' ? 0.7 : 1.1 });
   }
   throw new Error('unknown enemy ' + type);
 }

@@ -8,11 +8,12 @@ import {
   PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER, BOWS, STYLES,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
   NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK, FROST,
+  ELEMENTS, NW, NW_TOWNS,
 } from './data.js';
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -130,6 +131,7 @@ const PAL = {
   ash:   { top: new THREE.Color(0x3a1c18), hor: new THREE.Color(0x9a5a44), sun: new THREE.Color(0xff9a6a), hemi: 0.45 },
   realm: { top: new THREE.Color(0x120202), hor: new THREE.Color(0x6a1a0a), sun: new THREE.Color(0xff5a2a), hemi: 0.5 },
 };
+for (const el of ELEMENTS) PAL[el.key] = { top: new THREE.Color(el.sky.top), hor: new THREE.Color(el.sky.hor), sun: new THREE.Color(el.sky.sun), hemi: el.sky.hemi };
 const skyTop = new THREE.Color(), skyHor = new THREE.Color(), sunCol = new THREE.Color();
 
 buildWorld(scene);
@@ -289,7 +291,13 @@ const P = {
   blocking: false, blockPressT: -10, comboCount: 0, comboTimer: 0, lock: null,
   sheathed: true, combatT: 0, sheathT: 0,
   style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
+  life: null,
 };
+// Village perks in the new life.
+const perk = key => !!P.life && ELEMENTS[P.life.village].key === key;
+// A child grows from 58% of adult height at six to full height at sixteen.
+const growth = () => (P.life ? clamp((P.life.age - 6) / 10, 0, 1) : 1);
+const ageScale = () => 0.58 + 0.42 * growth();
 const hasCharm = c => P.charms.includes(c);
 const W = () => WEAPONS[P.weapon];
 const maxHp = () => 100 + (P.lvl - 1) * 12 + (hasCharm('vitality') ? 50 : 0);
@@ -298,7 +306,7 @@ const isArcher = () => P.style === 'archer';
 const B = () => BOWS[P.bow];
 // The equipped weapon: the bow for archers, the sword otherwise.
 const gear = () => (isArcher() ? B() : W());
-const atkPower = () => 6 + (P.lvl - 1) * 2 + gear().atk;
+const atkPower = () => Math.round((6 + (P.lvl - 1) * 2 + gear().atk) * (perk('fire') ? 1.15 : 1));
 // How each fighting style changes melee: attack speed, damage and stamina cost.
 const STYLE_MOD = { two: { speed: 0.95, mult: 1.12, cost: 1 }, one: { speed: 1.28, mult: 0.85, cost: 0.75 }, archer: { speed: 1, mult: 1, cost: 1 } };
 const defense = () => ARMORS[P.armor].def;
@@ -316,11 +324,14 @@ function rebuildPlayerRig() {
     cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf,
     weapon: archer ? null : 'katana', sheath: !archer, grip: P.style === 'one' ? 'one' : 'two',
     bow: archer ? { color: B().color, glow: B().glow } : null,
-    skin: L.skin, hair: L.hair,
+    skin: L.skin, hair: P.life && P.life.age >= 45 ? 0x9a9a9a : L.hair,
     armor: sk.armor ?? ARMOR_COLORS[P.armor],
     blade: { color: w.color, glow: w.glow, len: w.len ?? 1, style: w.style },
   });
   rig.armR.rotation.x = REST_ARM;
+  // Children are smaller, with bigger heads for their size.
+  rig.root.scale.setScalar(ageScale());
+  rig.head.scale.setScalar(1 + 0.22 * (1 - growth()));
   setSheathed(rig, P.sheathed);
   updateHint();
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
@@ -686,6 +697,7 @@ function tryShoot(heavy) {
 }
 const _aim = new THREE.Vector3(), _bowPos = new THREE.Vector3(), _hand = new THREE.Vector3();
 function fireArrow(heavy) {
+  trainHit(25, Math.sin(P.facing), Math.cos(P.facing));
   const t = aimTarget();
   const from = new THREE.Vector3(P.pos.x + Math.sin(P.facing) * 0.7, P.y + 1.55, P.pos.z + Math.cos(P.facing) * 0.7);
   if (t) _aim.set(t.pos.x, height(t.pos.x, t.pos.z) + t.def.scale * 1.3, t.pos.z).sub(from).normalize();
@@ -795,7 +807,7 @@ function tryDodge() {
   else P.dodgeDir.set(-Math.sin(P.facing), 0, -Math.cos(P.facing));
   P.facing = Math.atan2(P.dodgeDir.x, P.dodgeDir.z);
   P.st -= P.style === 'one' ? 13 : 20; P.stDelay = 0.8;
-  P.state = 'dodge'; P.stateT = 0; P.invul = 0.34; P.blocking = false;
+  P.state = 'dodge'; P.stateT = 0; P.invul = perk('shadow') ? 0.46 : 0.34; P.blocking = false;
   burst(P.pos.x, P.y + 0.2, P.pos.z, 8, 0x8a7a5a, 2, 1, 0.5, 4);
 }
 function drink(kind) {
@@ -821,6 +833,7 @@ function hitDamage(e, A) {
 function doPlayerHit(A) {
   const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
   let hit = false;
+  trainHit(A.range + 0.8, fx, fz);
   for (const e of enemies) {
     if (!e.alive || e.evadeT > 0) continue;
     const dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z;
@@ -878,6 +891,7 @@ function applyWeaponEffect(e, dmg) {
 
 function damagePlayer(amount, src, opts = {}) {
   if (P.dead || P.invul > 0 || P.hitInvul > 0) return false;
+  if (perk('ice')) amount *= 0.85;
   // Blocking: facing the attacker and not an unblockable move.
   if (P.blocking && !opts.unblockable && src) {
     const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
@@ -974,6 +988,7 @@ function gainXP(n) {
 
 const _base = new THREE.Vector3(), _tip = new THREE.Vector3();
 function updatePlayer(dt) {
+  if (perk('water') && !P.dead && P.hp > 0) P.hp = Math.min(maxHp(), P.hp + 1.5 * dt);
   P.stateT += dt;
   P.invul = Math.max(0, P.invul - dt);
   P.hitInvul = Math.max(0, P.hitInvul - dt);
@@ -1080,7 +1095,7 @@ function updatePlayer(dt) {
     }
   } else {
     const sprint = (keys.ShiftLeft || keys.ShiftRight) && P.st > 1 && dir.len > 0 && !P.blocking;
-    const speed = dir.len > 0 ? (P.blocking ? 2.6 : sprint ? 10.5 : 6.5) : 0;
+    const speed = (dir.len > 0 ? (P.blocking ? 2.6 : sprint ? 10.5 : 6.5) : 0) * (perk('shadow') ? 1.1 : 1);
     if (sprint) { P.st -= 20 * dt; P.stDelay = 0.4; }
     P.pos.x += dir.x * speed * dt;
     P.pos.z += dir.z * speed * dt;
@@ -1219,7 +1234,7 @@ function updateProjectiles(dt) {
 
 // ============================================================ Enemies
 const enemies = [];
-let boss = null;
+let boss = null, echo = null;
 const barGeoBg = new THREE.PlaneGeometry(1.3, 0.14);
 const barGeoFg = new THREE.PlaneGeometry(1.3, 0.14).translate(0.65, 0, 0);
 const barMatBg = new THREE.MeshBasicMaterial({ color: 0x1a0505, transparent: true, opacity: 0.75, depthTest: false });
@@ -1259,6 +1274,7 @@ function createEnemy(type, x, z, opts = {}) {
   return e;
 }
 
+const isKing = e => e === boss || e.role === 'echo';
 function pickType(mix) {
   let pick = wrand(), type = mix[0][0];
   for (const [t, p] of mix) { if (pick < p) { type = t; break; } pick -= p; }
@@ -1312,6 +1328,25 @@ function spawnWorldEnemies() {
     db.warlordEnemy = createEnemy('warlord', db.warlordSpot[0], db.warlordSpot[1], { tier: pw, role: 'warlord', base: db, title: db.warlord, facing: 0 });
   });
   boss = createEnemy('boss', ARENA.x, ARENA.z - 10, { facing: 0, role: 'boss' });
+  // The new world: imps near each village, oni out in the far wilds, the echo at the Crossroads.
+  for (const el of ELEMENTS) {
+    const t = el.town;
+    for (let g = 0, tries = 0; g < 6 && tries < 200; tries++) {
+      const a = el.angle + wr(-0.6, 0.6), r = wr(NW.ring - 75, NW.ring + 70);
+      const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+      if (townDist(x, z) < 14 || Math.hypot(x - t.x, z - t.z) < 45 || Math.hypot(x - NW.x, z - NW.z) < 45) continue;
+      for (let k = 0; k < 2; k++) createEnemy('imp_' + el.key, x + wr(-3, 3), z + wr(-3, 3));
+      g++;
+    }
+    for (let g = 0, tries = 0; g < 4 && tries < 200; tries++) {
+      const a = el.angle + wr(-0.55, 0.55), r = wr(NW.ring + 70, NW.r - 40);
+      const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+      if (townDist(x, z) < 20) continue;
+      createEnemy('beast_' + el.key, x, z);
+      g++;
+    }
+  }
+  echo = createEnemy('echo', nwSite.echo.x, nwSite.echo.z, { facing: 0, role: 'echo' });
 }
 
 function damageEnemy(e, dmg, crit, A, nx, nz) {
@@ -1340,16 +1375,18 @@ function killEnemy(e) {
   if (e.bar) e.bar.visible = false;
   if (P.lock === e) P.lock = null;
   const [g0, g1] = e.def.gold;
-  const gold = Math.round(randInt(g0, g1) * e.goldMul);
+  const gold = Math.round(randInt(g0, g1) * e.goldMul * (perk('golden') ? 1.5 : 1));
   P.gold += gold; P.kills++;
   const y = height(e.pos.x, e.pos.z) + e.def.scale * 2;
   floatText(new THREE.Vector3(e.pos.x, y + 0.6, e.pos.z), '+' + gold + ' gold', 'gold', 1.3);
   floatText(new THREE.Vector3(e.pos.x, y, e.pos.z), '+' + e.xp + ' xp', 'xp', 1.3);
   burst(e.pos.x, y - e.def.scale, e.pos.z, 40, DEMON_TYPES.has(e.type) ? 0x9a3aff : 0xffb347, 4, 6, 1.1, 3);
   gainXP(e.xp);
+  lifeKill(e);
   hitstop = Math.max(hitstop, 0.08);
   if (e.role) { slowmo = 0.9; shake(0.6); fovKick = 6; }
   if (e === boss) victory();
+  else if (e.role === 'echo') echoDefeated();
   else if (e.role === 'master') {
     const i = NINJA_BASES.indexOf(e.base);
     if (!P.mastersDead.includes(i)) P.mastersDead.push(i);
@@ -1406,8 +1443,8 @@ function setEmissive(e) {
 
 function specialMove(e, dist) {
   const r = Math.random();
-  if (e === boss && dist > 13 && r < 0.55) { e.state = 'chargeWind'; e.t = 0; return true; }
-  const slamR = e === boss ? 9 : 7;
+  if (isKing(e) && dist > 13 && r < 0.55) { e.state = 'chargeWind'; e.t = 0; return true; }
+  const slamR = isKing(e) ? 9 : 7;
   if (dist < slamR + 2 && r < (e.phase === 2 ? 0.5 : 0.3)) {
     e.state = 'slamWind'; e.t = 0;
     e.slamR = slamR;
@@ -1463,8 +1500,8 @@ function updateEnemies(dt, playerSafe) {
     const toPlayer = Math.atan2(dx, dz);
     const turnTo = (ang, k) => { e.facing = angleLerp(e.facing, ang, 1 - Math.exp(-k * dt)); };
     const homeDist = Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z);
-    const leash = e === boss ? 55 : e.role ? 45 : 75;
-    const special = e === boss || e.role === 'warlord';
+    const leash = isKing(e) ? 55 : e.role ? 45 : 75;
+    const special = isKing(e) || e.role === 'warlord';
 
     switch (e.state) {
       case 'idle': {
@@ -1484,6 +1521,7 @@ function updateEnemies(dt, playerSafe) {
           e.state = 'chase';
           floatText(new THREE.Vector3(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 2.4 + 0.6, e.pos.z), '!', 'alert', 0.8);
           if (e === boss) { banner('Shuten-doji', 'The Demon King rises to face you', 3); shake(0.5); }
+          else if (e.role === 'echo') { banner(e.title, 'The Demon King\'s shadow', 3); shake(0.5); }
           else if (e.role) banner(e.title, e.role === 'master' ? 'Master of ' + e.base.name : 'Lord of the ' + e.base.name, 2.5);
         }
         break;
@@ -1784,7 +1822,7 @@ function updateHUD() {
   hud.gold.textContent = P.gold;
   hud.pots.textContent = P.potions;
   hud.elx.textContent = P.elixirs;
-  hud.gear.textContent = `${STYLES[P.style].name} · ${gear().name} (atk ${atkPower()}) · ${ARMORS[P.armor].name} (def ${defense()}) · Kills ${P.kills}`;
+  hud.gear.textContent = `${P.life ? ELEMENTS[P.life.village].name + ' village · Age ' + P.life.age + ' · ' : ''}${STYLES[P.style].name} · ${gear().name} (atk ${atkPower()}) · ${ARMORS[P.armor].name} (def ${defense()}) · Kills ${P.kills}`;
   const show = engaged && engaged.alive;
   hud.bossbar.classList.toggle('hidden', !show);
   if (show) { hud.bossName.textContent = engaged.title; hud.bossFill.style.width = (engaged.hp / engaged.maxHp * 100) + '%'; }
@@ -1835,6 +1873,10 @@ modalBox.addEventListener('click', e => {
     case 'rest': rest(); break;
     case 'travel': travel(Number(arg)); break;
     case 'rise': rise(); break;
+    case 'curse': showCurse(); break;
+    case 'villages': openVillageChoice(); break;
+    case 'join': startNewLife(Number(arg)); break;
+    case 'sleep': sleepAtHome(); break;
     case 'talk': talkChoice(arg); break;
     case 'look': setLook(arg); break;
     case 'creator': openCreator(false); break;
@@ -1876,7 +1918,7 @@ function showTitle() {
     outfits in every town, then slay <b>Shuten-doji, the Demon King</b>.</p>
     ${CONTROLS_HTML}
     <div class="btns">
-      ${s ? `<button data-act="continue">Continue (Lv ${s.lvl}, ${TOWNS[s.lastTown]?.name ?? ''})</button>` : ''}
+      ${s ? `<button data-act="continue">Continue (${s.life ? 'Age ' + s.life.age : 'Lv ' + s.lvl}, ${TOWNS[s.lastTown]?.name ?? ''})</button>` : ''}
       <button data-act="new" class="${s ? 'secondary' : ''}">New Journey</button>
     </div>`, 'title');
 }
@@ -1904,6 +1946,9 @@ function interact() {
   if (it.kind === 'shop') openShop(it.town, it.shop);
   else if (it.kind === 'shrine') openShrine(it.town);
   else if (it.kind === 'chest') lootChest(it.index);
+  else if (it.kind === 'home') openHome(it.town);
+  else if (it.kind === 'sensei') openSensei(it.town);
+  else if (it.kind === 'well') drawWater();
   else openElder(it.town);
 }
 
@@ -2063,7 +2108,7 @@ function openShrine(town) {
   P.lastTown = town.index;
   save();
   const dests = TOWNS.map(t => {
-    if (t === town) return '';
+    if (t === town || !!t.nw !== !!town.nw) return '';
     const known = P.discovered.includes(t.index);
     return `<button class="secondary" data-act="travel|${t.index}" ${known ? '' : 'disabled'}>${known ? 'Travel to ' + t.name : '??? (undiscovered)'}</button>`;
   }).join('');
@@ -2100,6 +2145,15 @@ function travel(i) {
   }, 500);
 }
 function openElder(town) {
+  const L = P.life, task = L?.task;
+  if (task?.type === 'deliver' && task.target === town.index) {
+    openModal(`<h2>${town.elderTitle}</h2><p>&ldquo;A letter from ${ELEMENTS[L.village].village}? You came all this way alone? Here, take something for the road.&rdquo;</p>
+      <div class="btns"><button data-act="close">Bow</button></div>`, 'dialog');
+    P.potions++;
+    finishTask();
+    return;
+  }
+  if (task?.type === 'ceremony' && town.nw && town.element === L.village) { comingOfAge(); return; }
   openModal(`<h2>${town.elderTitle ?? 'Elder of ' + town.name}</h2><p class="sub">${town.city ? 'They receive you in the city square.' : 'An old villager leans on a staff.'}</p>
     ${town.elder.map(l => `<p>&ldquo;${l}&rdquo;</p>`).join('')}
     <div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
@@ -2109,6 +2163,7 @@ function openElder(town) {
 let talkTarget = null;
 function talkKey(e) {
   if (e === boss) return 'boss';
+  if (e.role === 'echo') return 'echo';
   if (e.role === 'master') return 'master' + NINJA_BASES.indexOf(e.base);
   return 'warlord' + DEMON_BASES.indexOf(e.base);
 }
@@ -2199,8 +2254,305 @@ function victory() {
       <p class="center">The Demon King falls, and the darkness over Oni Mountain lifts.<br>
       The towns of the Tokaido road are safe once more.</p>
       <p class="center sub">Level ${P.lvl} &middot; ${P.kills} foes defeated &middot; &#9672; ${P.gold} gold &middot; ${P.ownedWeapons.length} swords</p>
-      <div class="btns"><button data-act="close">Keep exploring</button></div>`, 'victory');
+      <div class="btns"><button data-act="curse">But the Demon King is laughing&hellip;</button></div>`, 'ending');
   }, 3000);
+}
+
+// ============================================================ A new life
+// With his last breath the Demon King curses the hero: they are torn out of this world
+// and reborn as a child on an island of five villages.
+function showCurse() {
+  screenFlash(1);
+  shake(1);
+  openModal(`<div class="kanji">呪</div><h2 class="center">The Demon King's Curse</h2>
+    <p>&ldquo;You think you have won?&rdquo; Shuten-doji laughs as his body turns to ash. &ldquo;If I cannot have this world, <i>you</i> will not have it either!&rdquo;</p>
+    <p>The sky splits open. A storm of black fire swallows you, and the Tokaido road vanishes.</p>
+    <p>When you wake, your hands are small. Your sword is gone. You are a <b>child</b> again, on an island you have never seen,
+    where five villages live around a great sacred tree.</p>
+    <p class="sub center">Choose the village that will raise you. It is your new home, and its gift stays with you all your life.</p>
+    <div class="btns"><button data-act="villages">Choose your village</button></div>`, 'curse');
+}
+function openVillageChoice() {
+  openModal(`<div class="kanji">五つの里</div><h2 class="center">The Five Villages</h2>
+    <p class="sub center">Where will you grow up?</p>
+    <div class="villages">${ELEMENTS.map(el => `
+      <button class="village" data-act="join|${el.index}" style="--el:${el.css}">
+        <i>${el.kanji}</i><b>${el.village} &middot; ${el.name}</b>
+        <span>${el.desc}</span><em>${el.perk}</em>
+      </button>`).join('')}</div>`, 'village');
+}
+function startNewLife(k) {
+  const el = ELEMENTS[k], t = el.town;
+  Object.assign(P, {
+    lvl: 1, xp: 0, gold: 20, potions: 3, elixirs: 0, weapon: 'bokken', ownedWeapons: ['bokken'], armor: 'cloth', charms: [],
+    bow: 'hankyu', ownedBows: ['hankyu'], skin: 'custom', discovered: [t.index], lastTown: t.index, bossDead: true,
+  });
+  P.life = { village: k, age: 6, task: null, done: 0, adult: false, echoDead: false };
+  P.dead = false; P.state = 'idle'; P.hp = maxHp(); P.st = maxSt(); P.ki = 0; P.lock = null;
+  P.sheathed = !isArcher();
+  syncLife();
+  closeModal();
+  ui = 'travel';
+  const fade = $('fade');
+  fade.style.opacity = '1';
+  setTimeout(() => {
+    goHome();
+    rebuildPlayerRig();
+    fade.style.opacity = '0';
+    ui = null;
+    banner(el.village, 'A new life begins. You are six years old.', 4);
+    setTimeout(() => { if (!P.life.task) nextTask(); save(); }, 4200);
+    save();
+  }, 700);
+}
+function goHome() {
+  const h = nwSite.homes[P.life.village];
+  P.pos.set(h.x, 0, h.z);
+  P.y = height(h.x, h.z); P.vy = 0;
+  P.facing = h.facing; camYaw = h.facing + Math.PI;
+  currentTown = ELEMENTS[P.life.village].town;
+}
+// Hide or reveal the echo depending on where the life story stands.
+function syncLife() {
+  const wake = P.life && P.life.adult && !P.life.echoDead;
+  if (wake && !echo.alive) { respawnEnemy(echo); echo.talked = false; }
+  else if (!wake && echo.alive) markDead(echo);
+}
+
+// ---- Life tasks: each one finished is another year of growing up.
+const LIFE_PLAN = [
+  { type: 'water' },
+  { type: 'gather', n: 5 },
+  { type: 'train', n: 12 },
+  { type: 'deliver', hop: 1 },
+  { type: 'hunt', what: 'imp', n: 3 },
+  { type: 'gather', n: 7 },
+  { type: 'train', n: 20, gift: 'steel' },
+  { type: 'deliver', hop: 2 },
+  { type: 'hunt', what: 'imp', n: 6 },
+  { type: 'hunt', what: 'beast', n: 2 },
+];
+const pickups = [];
+const pickupMat = new Map();
+function nextTask() {
+  const L = P.life, el = ELEMENTS[L.village];
+  let task;
+  if (L.age < 16) task = { ...LIFE_PLAN[L.age - 6] };
+  else if (!L.adult) task = { type: 'ceremony' };
+  else if (!L.echoDead) task = { type: 'echo' };
+  else {
+    // Grown-up life: odd jobs for the villages, for gold.
+    const r = Math.floor(Math.random() * 3);
+    task = r === 0 ? { type: 'hunt', what: 'beast', n: 3, pay: 150 } : r === 1 ? { type: 'deliver', hop: 1 + Math.floor(Math.random() * 4), pay: 90 } : { type: 'gather', n: 8, pay: 70 };
+  }
+  task.have = 0;
+  if (task.type === 'deliver') task.target = ELEMENTS[(L.village + task.hop) % 5].town.index;
+  if (task.type === 'water') task.stage = 0;
+  L.task = task;
+  if (task.type === 'gather') spawnPickups(task.n + 2);
+  banner(taskTitle(task), taskText(task), 3.2);
+  updateQuest();
+}
+function taskTitle(t) {
+  return { water: 'A chore for Mother', gather: 'Gathering', train: 'Training', deliver: 'A letter to deliver', hunt: 'A hunt', ceremony: 'Coming of age', echo: 'The Demon King\'s shadow' }[t.type];
+}
+function taskText(t) {
+  const el = ELEMENTS[P.life.village];
+  switch (t.type) {
+    case 'water': return t.stage ? 'Carry the bucket home to your family' : 'Draw water from the village well';
+    case 'gather': return `Collect ${el.item} around ${el.village} (${t.have}/${t.n})`;
+    case 'train': return `Strike the dojo's straw dummies (${t.have}/${t.n})`;
+    case 'deliver': return `Deliver a letter to the elder of ${TOWNS[t.target].name}`;
+    case 'hunt': return `Drive off ${t.what === 'imp' ? 'spirit imps' : 'wild oni'} in the wilds (${t.have}/${t.n})`;
+    case 'ceremony': return `Visit the elder of ${el.village} for your coming-of-age ceremony`;
+    case 'echo': return 'Something stirs beneath the sacred tree at the Crossroads. Face it.';
+  }
+  return '';
+}
+function updateQuest() {
+  const q = $('quest');
+  if (!P.life || !P.life.task || !inNewWorld(P.pos.x)) { q.classList.add('hidden'); return; }
+  const el = ELEMENTS[P.life.village];
+  q.classList.remove('hidden');
+  q.style.setProperty('--el', el.css);
+  q.innerHTML = `<div class="qage">${el.kanji} Age ${P.life.age} &middot; ${el.village}</div><b>${taskTitle(P.life.task)}</b><span>${taskText(P.life.task)}</span>`;
+}
+function spawnPickups(n) {
+  clearPickups();
+  const el = ELEMENTS[P.life.village], t = el.town;
+  if (!pickupMat.has(el.key)) pickupMat.set(el.key, new THREE.MeshStandardMaterial({ color: el.color, emissive: el.color, emissiveIntensity: 1.4 }));
+  const geo = new THREE.OctahedronGeometry(0.28);
+  for (let i = 0, tries = 0; i < n && tries < 400; tries++) {
+    const a = Math.random() * Math.PI * 2, r = rand(t.r + 6, t.r + 45);
+    const x = t.x + Math.cos(a) * r, z = t.z + Math.sin(a) * r;
+    if (townDist(x, z) < 3 || Math.hypot(x - NW.x, z - NW.z) > NW.r - 40 || height(x, z) < -0.3) continue;
+    const m = new THREE.Mesh(geo, pickupMat.get(el.key));
+    m.position.set(x, height(x, z) + 0.8, z);
+    scene.add(m);
+    pickups.push(m);
+    i++;
+  }
+}
+function clearPickups() {
+  for (const m of pickups) scene.remove(m);
+  pickups.length = 0;
+}
+function updatePickups(dt) {
+  if (!pickups.length) return;
+  const task = P.life?.task;
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const m = pickups[i];
+    m.rotation.y += dt * 2;
+    m.position.y = height(m.position.x, m.position.z) + 0.8 + Math.sin(time * 3 + i) * 0.15;
+    if (Math.hypot(m.position.x - P.pos.x, m.position.z - P.pos.z) < 1.5 && task?.type === 'gather') {
+      burst(m.position.x, m.position.y, m.position.z, 18, ELEMENTS[P.life.village].color, 2, 3, 0.7, 1);
+      scene.remove(m);
+      pickups.splice(i, 1);
+      task.have++;
+      floatText(headPos(), `${task.have}/${task.n}`, 'xp', 1);
+      updateQuest();
+      if (task.have >= task.n) { clearPickups(); finishTask(); }
+    }
+  }
+}
+function trainHit(reach, fx, fz) {
+  const task = P.life?.task;
+  if (task?.type !== 'train') return;
+  for (const d of nwSite.dummies[P.life.village] ?? []) {
+    const dx = d.x - P.pos.x, dz = d.z - P.pos.z, dist = Math.hypot(dx, dz);
+    if (dist > reach || (dx * fx + dz * fz) / (dist || 1) < 0) continue;
+    task.have++;
+    spawnImpact(d.x, height(d.x, d.z) + 1.4, d.z, { color: 0xffe0a0, size: 1 });
+    floatText(new THREE.Vector3(d.x, height(d.x, d.z) + 2.4, d.z), `${task.have}/${task.n}`, 'xp', 0.8);
+    updateQuest();
+    if (task.have >= task.n) finishTask();
+    return;
+  }
+}
+function lifeKill(e) {
+  const task = P.life?.task;
+  if (task?.type !== 'hunt' || !e.type.startsWith(task.what + '_')) return;
+  task.have++;
+  updateQuest();
+  if (task.have >= task.n) finishTask();
+}
+function finishTask() {
+  const L = P.life, task = L.task, el = ELEMENTS[L.village];
+  L.task = null;
+  L.done++;
+  const gold = task.pay ?? 10 + L.age * 4, xp = 25 + L.age * 8;
+  P.gold += gold;
+  gainXP(xp);
+  floatText(headPos(), `+${gold} gold`, 'gold', 1.4);
+  if (task.gift && !P.ownedWeapons.includes(task.gift)) {
+    P.ownedWeapons.push(task.gift);
+    P.weapon = task.gift;
+  }
+  ageUp(task.gift ? `${el.sensei} gives you a real steel katana!` : null);
+}
+function ageUp(note) {
+  const L = P.life;
+  L.age++;
+  P.hp = maxHp();
+  rebuildPlayerRig();
+  burst(P.pos.x, P.y + 1.2, P.pos.z, 50, ELEMENTS[L.village].color, 3, 4, 1.1, 1);
+  const sub = note ?? (L.age < 16 ? 'You grow a little taller.' : L.age === 16 ? 'You are grown. The elder wants to see you.' : 'Another year of your new life.');
+  banner(L.age === 16 ? 'Sixteen years old' : `Happy birthday! Age ${L.age}`, sub, 3);
+  setTimeout(() => { if (P.life === L && !L.task) nextTask(); save(); }, 3200);
+  save();
+}
+function comingOfAge() {
+  const L = P.life, el = ELEMENTS[L.village];
+  L.adult = true;
+  L.task = null;
+  if (!P.ownedWeapons.includes(el.blade)) P.ownedWeapons.push(el.blade);
+  P.weapon = el.blade;
+  if (P.armor === 'cloth') P.armor = 'leather';
+  rebuildPlayerRig();
+  syncLife();
+  screenFlash(0.6);
+  burst(P.pos.x, P.y + 1.5, P.pos.z, 90, el.color, 4, 6, 1.4, 2);
+  openModal(`<div class="kanji">${el.kanji}</div><h2 class="center">The Coming of Age</h2>
+    <p>The whole village gathers. ${el.parents[0]} is crying, and ${el.parents[1]} pretends not to be.</p>
+    <p>&ldquo;Ten years ago you fell from a black storm,&rdquo; the elder says. &ldquo;We raised you as one of our own. Today you are a ${el.name} samurai of ${el.village}.&rdquo;</p>
+    <p>The elder places the village's heirloom in your hands: <b style="color:${el.css}">${WEAPONS[el.blade].name}</b>.</p>
+    <p class="sub">&ldquo;But listen. Since the night you came, something has been growing under the sacred tree at the Crossroads. It speaks with the Demon King's voice.&rdquo;</p>
+    <div class="btns"><button data-act="close">Accept the blade</button></div>`, 'dialog');
+  save();
+  setTimeout(() => { if (!L.task) nextTask(); }, 400);
+}
+function echoDefeated() {
+  const L = P.life;
+  if (!L) return;
+  L.echoDead = true;
+  L.task = null;
+  save();
+  setTimeout(() => {
+    openModal(`<div class="kanji">新生</div><h1>A New Legend</h1>
+      <p class="center">The echo of Shuten-doji screams and fades into the roots of the sacred tree. This time, he is gone for good.</p>
+      <p class="center">The five villages light lanterns all night in your name. You have lived two lives, and saved two worlds.</p>
+      <p class="center sub">Your life goes on: the villages still need a samurai. Take on jobs from your family for gold, and grow old in peace.</p>
+      <div class="btns"><button data-act="close">Live on</button></div>`, 'victory');
+    nextTask();
+  }, 2500);
+}
+function openHome(town) {
+  const L = P.life;
+  const el = ELEMENTS[town.element];
+  if (!L || L.village !== town.element) {
+    openModal(`<h2>A family of ${el.village}</h2><p>&ldquo;Oh, a visitor! Rest your feet at the shrine, traveler.&rdquo;</p>
+      <div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
+    return;
+  }
+  const task = L.task;
+  if (task?.type === 'water' && task.stage === 1) {
+    openModal(`<h2>${el.parents[0]}</h2><p>&ldquo;What a strong child! A whole bucket, and you only spilled half.&rdquo;</p>
+      <div class="btns"><button data-act="close">Smile</button></div>`, 'dialog');
+    finishTask();
+    return;
+  }
+  const lines = L.age < 9 ? [`&ldquo;There you are! Don't wander past the fences, little one.&rdquo;`, `${el.parents[1]} ruffles your hair.`]
+    : L.age < 16 ? [`&ldquo;You're getting so tall. ${el.sensei} says you have a gift.&rdquo;`, `${el.parents[1]}: &ldquo;Mind the imps on the paths. Hit first, and keep your guard up.&rdquo;`]
+    : [`&ldquo;Our child, a samurai of ${el.village}. Your grandparents would be proud.&rdquo;`, `${el.parents[1]}: &ldquo;Sleep here whenever you like. This is your home.&rdquo;`];
+  P.lastTown = town.index;
+  openModal(`<h2>Home &middot; ${el.parents.join(' &amp; ')}</h2>
+    ${lines.map(l => `<p>${l}</p>`).join('')}
+    ${task ? `<p class="sub">Current task: ${taskText(task)}</p>` : ''}
+    <div class="btns"><button data-act="sleep">Sleep (heal &amp; save)</button><button class="secondary" data-act="close">Head out (E)</button></div>`, 'dialog');
+}
+function openSensei(town) {
+  const el = ELEMENTS[town.element], L = P.life;
+  const mine = L && L.village === town.element;
+  const tip = !mine ? 'Our dojo trains only the children of this village. Still, a blade is a blade. Keep yours sharp.'
+    : L.age < 12 ? 'Hit the dummies, little one! Click to swing, and keep swinging. Hold Q to block.'
+    : L.age < 16 ? 'Good footwork. Remember: press Q just as a blow lands to parry it.'
+    : 'You have outgrown my lessons. When your Ki is full, press X: show them what a samurai of ' + el.village + ' can do.';
+  openModal(`<h2>${el.sensei}</h2><p>&ldquo;${tip}&rdquo;</p>
+    ${mine && L.task?.type === 'train' ? `<p class="sub">Training: ${L.task.have}/${L.task.n} strikes</p>` : ''}
+    <div class="btns"><button class="secondary" data-act="close">Bow (E)</button></div>`, 'dialog');
+}
+function drawWater() {
+  const task = P.life?.task;
+  if (task?.type === 'water' && task.stage === 0) {
+    task.stage = 1;
+    burst(P.pos.x, P.y + 1, P.pos.z, 20, 0x8ad0ff, 2, 3, 0.7, 1);
+    banner('Bucket filled', 'Carry it home to your family', 2);
+    updateQuest();
+  } else banner('', 'The well water is cold and clear.', 1.5);
+}
+function sleepAtHome() {
+  P.hp = maxHp(); P.st = maxSt();
+  closeModal();
+  const fade = $('fade');
+  fade.style.opacity = '1';
+  ui = 'travel';
+  setTimeout(() => {
+    for (const e of enemies) if (!e.alive && !e.role && !e.summoned) respawnEnemy(e);
+    fade.style.opacity = '0';
+    ui = null;
+    banner('Good morning', 'Health restored. Progress saved.', 2);
+    save();
+  }, 900);
 }
 
 // Maps
@@ -2216,7 +2568,9 @@ function drawMap(ctx, Wd, H, cx, cz, scale, full) {
   const X = x => Wd / 2 + (x - cx) * scale, Z = z => H / 2 + (z - cz) * scale;
   ctx.font = `${full ? 15 : 10}px ${getComputedStyle(document.body).fontFamily}`;
   ctx.textAlign = 'center';
-  if (realm) {
+  if (inNewWorld(P.pos.x)) {
+    drawNwMap(ctx, X, Z, scale, full);
+  } else if (realm) {
     for (const db of DEMON_BASES) {
       ctx.fillStyle = '#2a2224';
       ctx.beginPath(); ctx.arc(X(db.x), Z(db.z), DEMON_R * scale, 0, Math.PI * 2); ctx.fill();
@@ -2281,6 +2635,36 @@ function drawMap(ctx, Wd, H, cx, cz, scale, full) {
   }
   ctx.restore();
 }
+function drawNwMap(ctx, X, Z, scale, full) {
+  ctx.fillStyle = '#1a3e52';
+  ctx.fillRect(0, 0, 4000, 4000);
+  for (const el of ELEMENTS) {
+    ctx.fillStyle = el.css + '55';
+    ctx.beginPath();
+    ctx.moveTo(X(NW.x), Z(NW.z));
+    ctx.arc(X(NW.x), Z(NW.z), (NW.r - 30) * scale, el.angle - Math.PI / 5, el.angle + Math.PI / 5);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#c4a874'; ctx.lineWidth = full ? 3 : 2;
+  for (const t of NW_TOWNS) {
+    ctx.beginPath(); ctx.moveTo(X(t.attach[0]), Z(t.attach[1])); ctx.lineTo(X(t.x), Z(t.z)); ctx.stroke();
+    const n = NW_TOWNS[(t.element + 1) % 5];
+    ctx.beginPath(); ctx.moveTo(X(t.x), Z(t.z)); ctx.lineTo(X(n.x), Z(n.z)); ctx.stroke();
+  }
+  ctx.fillStyle = '#f6d8ec';
+  ctx.beginPath(); ctx.arc(X(NW.x), Z(NW.z), Math.max(5, 20 * scale), 0, Math.PI * 2); ctx.fill();
+  if (echo?.alive) { ctx.fillStyle = '#b48cff'; ctx.beginPath(); ctx.arc(X(echo.pos.x), Z(echo.pos.z), 5, 0, Math.PI * 2); ctx.fill(); }
+  for (const t of NW_TOWNS) {
+    const el = ELEMENTS[t.element], known = P.discovered.includes(t.index);
+    ctx.fillStyle = known ? el.css : 'rgba(150,150,150,0.7)';
+    ctx.beginPath(); ctx.arc(X(t.x), Z(t.z), Math.max(5, t.r * scale), 0, Math.PI * 2); ctx.fill();
+    if (P.life?.village === t.element) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
+    if (full || scale > 0.5) { ctx.fillStyle = '#fff'; ctx.fillText(known ? el.kanji + ' ' + t.name : '???', X(t.x), Z(t.z) - Math.max(8, t.r * scale) - 4); }
+  }
+  if (full) { ctx.fillStyle = '#f6d8ec'; ctx.fillText('The Crossroads', X(NW.x), Z(NW.z) + 26); }
+  for (const m of pickups) { ctx.fillStyle = '#fff6a0'; ctx.fillRect(X(m.position.x) - 2, Z(m.position.z) - 2, 4, 4); }
+}
 function toggleMap() {
   const el = $('bigmap');
   if (ui === 'map') { el.classList.add('hidden'); ui = null; return; }
@@ -2288,14 +2672,20 @@ function toggleMap() {
   if (document.pointerLockElement) document.exitPointerLock();
   el.classList.remove('hidden');
   const Wd = bigCanvas.width, H = bigCanvas.height;
-  const scale = Math.min(Wd / (BOUNDS.maxX - BOUNDS.minX + 40), H / (BOUNDS.maxZ - BOUNDS.minZ + 40));
-  drawMap(big, Wd, H, 0, (BOUNDS.minZ + BOUNDS.maxZ) / 2, scale, true);
+  if (inNewWorld(P.pos.x)) drawMap(big, Wd, H, NW.x, NW.z, Math.min(Wd, H) / (NW.r * 2 + 20), true);
+  else {
+    const scale = Math.min(Wd / (BOUNDS.maxX - BOUNDS.minX + 40), H / (BOUNDS.maxZ - BOUNDS.minZ + 40));
+    drawMap(big, Wd, H, 0, (BOUNDS.minZ + BOUNDS.maxZ) / 2, scale, true);
+  }
 }
 
 // ============================================================ World state (location, sky, prompts)
-let currentTown = null, arenaAnnounced = false, currentPlace = null;
+let currentTown = null, arenaAnnounced = false, currentPlace = null, wasNw = false;
+const _w = [0, 0, 0, 0, 0];
+const _nwPal = { top: new THREE.Color(), hor: new THREE.Color(), sun: new THREE.Color(), hemi: 0.5 };
 const _center = new THREE.Vector3();
 function updateWorldState(dt) {
+  if (inNewWorld(P.pos.x) !== wasNw) { wasNw = !wasNw; updateQuest(); }
   const t = townAt(P.pos.x, P.pos.z);
   const realm = demonBaseAt(P.pos.x, P.pos.z);
   const nb = realm ? null : ninjaBaseAt(P.pos.x, P.pos.z);
@@ -2317,7 +2707,16 @@ function updateWorldState(dt) {
     arenaAnnounced = true;
     banner('Shrine of Oni Mountain', 'The Demon King awaits', 3);
   }
-  if (realm) {
+  const nwOn = inNewWorld(P.pos.x);
+  const sec = nwOn ? ELEMENTS[nwSector(P.pos.x, P.pos.z)] : null;
+  if (nwOn && !t) {
+    const hubD = Math.hypot(P.pos.x - NW.x, P.pos.z - NW.z);
+    hud.locName.textContent = hubD < 40 ? 'The Crossroads' : sec.name + ' Wilds';
+    hud.locSub.textContent = hubD < 40 ? 'The great sacred tree' : P.life && P.life.age < 10 ? 'Stay close to the path, little one' : 'Spirits roam here';
+  } else if (nwOn && t) {
+    hud.locName.textContent = t.name;
+    hud.locSub.textContent = ELEMENTS[t.element].name + ' village' + (P.life?.village === t.element ? ' · home' : ' · shop · shrine');
+  } else if (realm) {
     const i = DEMON_BASES.indexOf(realm);
     hud.locName.textContent = realm.name;
     hud.locSub.textContent = P.warlordsDead.includes(i) ? (P.chestsLooted.includes(i) ? 'Conquered' : 'The treasure awaits') : 'Danger ' + '★'.repeat(Math.min(5, i + 2));
@@ -2331,22 +2730,36 @@ function updateWorldState(dt) {
   }
 
   // Sky and light: blue road, ashen north, burning demon realm.
-  const a = realm ? 0 : smooth(ASH_Z + 30, ASH_Z - 130, P.pos.z) * (P.bossDead ? 0.3 : 1);
-  const base = realm ? PAL.realm : PAL.day;
+  const a = realm || nwOn ? 0 : smooth(ASH_Z + 30, ASH_Z - 130, P.pos.z) * (P.bossDead ? 0.3 : 1);
+  let base = realm ? PAL.realm : PAL.day;
+  if (nwOn) {
+    // Blend the element skies by where you stand on the island.
+    nwWeights(P.pos.x, P.pos.z, _w);
+    const hubK = 1 - smooth(30, 90, Math.hypot(P.pos.x - NW.x, P.pos.z - NW.z));
+    _nwPal.top.setRGB(0, 0, 0); _nwPal.hor.setRGB(0, 0, 0); _nwPal.sun.setRGB(0, 0, 0); _nwPal.hemi = 0;
+    ELEMENTS.forEach((el, k) => {
+      const w = lerp(_w[k], 0.2, hubK), Q = PAL[el.key];
+      _nwPal.top.r += Q.top.r * w; _nwPal.top.g += Q.top.g * w; _nwPal.top.b += Q.top.b * w;
+      _nwPal.hor.r += Q.hor.r * w; _nwPal.hor.g += Q.hor.g * w; _nwPal.hor.b += Q.hor.b * w;
+      _nwPal.sun.r += Q.sun.r * w; _nwPal.sun.g += Q.sun.g * w; _nwPal.sun.b += Q.sun.b * w;
+      _nwPal.hemi += Q.hemi * w;
+    });
+    base = _nwPal;
+  }
   skyTop.copy(base.top).lerp(PAL.ash.top, a);
   skyHor.copy(base.hor).lerp(PAL.ash.hor, a);
   sunCol.copy(base.sun).lerp(PAL.ash.sun, a);
   scene.fog.color.copy(skyHor);
   scene.fog.near = realm ? 40 : 70;
-  scene.fog.far = realm ? 170 : lerp(260, 180, a);
+  scene.fog.far = realm ? 170 : nwOn ? 240 : lerp(260, 180, a);
   sun.color.copy(sunCol);
   hemi.intensity = lerp(base.hemi, PAL.ash.hemi, a);
   hemi.groundColor.set(realm ? 0x8a2a10 : 0x5a4a35);
-  updateSky(camera.position, dt, skyTop, skyHor, sunCol, !!realm);
-  refreshEnvironment(realm ? 'realm' : a > 0.5 ? 'ash' : 'day');
+  updateSky(camera.position, dt, skyTop, skyHor, sunCol, !!realm || nwOn);
+  refreshEnvironment(realm ? 'realm' : nwOn ? 'nw' + sec.key : a > 0.5 ? 'ash' : 'day');
   scene.environmentIntensity = realm ? 0.5 : lerp(0.8, 0.55, a);
   const marsh = REGIONS[regionIndex(P.pos.x, P.pos.z)]?.name === 'Firefly Marsh';
-  const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < ASH_Z ? 'ash'
+  const mode = nwOn ? sec.ambient : realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < ASH_Z ? 'ash'
     : frostAmt(P.pos.z) > 0.3 ? 'snow' : marsh ? 'fireflies'
     : P.pos.z > -620 || townAt(P.pos.x, P.pos.z) ? 'petals' : 'none';
   updateAmbient(dt, _center.set(P.pos.x, P.y, P.pos.z), mode, time);
@@ -2357,6 +2770,9 @@ function updateWorldState(dt) {
     const label = it.kind === 'shop' ? 'Trade at ' + it.shop.shopName
       : it.kind === 'shrine' ? 'Pray at the shrine &mdash; rest, save &amp; travel'
       : it.kind === 'chest' ? (P.warlordsDead.includes(it.index) ? 'Open the treasure chest' : 'Sealed chest &mdash; defeat the warlord')
+      : it.kind === 'home' ? (P.life?.village === it.town.element ? 'Go home &mdash; your family' : 'Talk to the family')
+      : it.kind === 'sensei' ? 'Talk to ' + ELEMENTS[it.town.element].sensei
+      : it.kind === 'well' ? 'Draw water from the well'
       : 'Talk to the elder';
     hud.prompt.innerHTML = '<b class="gold">[E]</b> ' + label;
   } else hud.prompt.style.display = 'none';
@@ -2370,7 +2786,7 @@ function updateCamera(dt) {
     const want = Math.atan2(P.pos.x - P.lock.pos.x, P.pos.z - P.lock.pos.z);
     camYaw = angleLerp(camYaw, want, 1 - Math.exp(-5 * dt));
   }
-  const tx = P.pos.x, ty = P.y + 1.8, tz = P.pos.z;
+  const tx = P.pos.x, ty = P.y + 0.5 + 1.3 * ageScale(), tz = P.pos.z;
   const cp = Math.cos(camPitch);
   let cx = tx + Math.sin(camYaw) * cp * camDist, cy = ty + Math.sin(camPitch) * camDist + 0.6, cz = tz + Math.cos(camYaw) * cp * camDist;
   cy = Math.max(cy, height(cx, cz) + 0.7);
@@ -2413,6 +2829,7 @@ function save() {
       ownedWeapons: P.ownedWeapons, skin: P.skin, ownedSkins: P.ownedSkins, look: P.look,
       style: P.style, bow: P.bow, ownedBows: P.ownedBows,
       mastersDead: P.mastersDead, warlordsDead: P.warlordsDead, chestsLooted: P.chestsLooted,
+      life: P.life,
     }));
   } catch { /* storage unavailable: play on without saving */ }
 }
@@ -2435,6 +2852,7 @@ function loadSave() {
     s.ownedBows = [...new Set(['hankyu', ...(s.ownedBows ?? [])])].filter(k => BOWS[k]);
     if (!BOWS[s.bow]) s.bow = 'hankyu';
     if (!SKINS[s.skin]) s.skin = 'ronin';
+    if (s.life && !ELEMENTS[s.life.village]) s.life = null;
     return s;
   } catch { return null; }
 }
@@ -2451,8 +2869,9 @@ function startGame(s) {
     lvl: 1, xp: 0, gold: 0, potions: 2, elixirs: 0, weapon: 'worn', armor: 'cloth', charms: [],
     discovered: [0], lastTown: 0, bossDead: false, kills: 0, ownedWeapons: ['worn'], skin: 'ronin', ownedSkins: ['ronin', 'custom'],
     look: { ...DEFAULT_LOOK }, style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
-    mastersDead: [], warlordsDead: [], chestsLooted: [],
+    mastersDead: [], warlordsDead: [], chestsLooted: [], life: null,
   }, s ?? {});
+  P.life = P.life ? { ...P.life } : null;
   for (const k of ['charms', 'discovered', 'ownedWeapons', 'ownedSkins', 'mastersDead', 'warlordsDead', 'chestsLooted', 'ownedBows']) P[k] = [...P[k]];
   P.sheathed = P.style !== 'archer';
   P.look = { ...P.look };
@@ -2464,13 +2883,19 @@ function startGame(s) {
     if (open && nb.masterEnemy.alive) markDead(nb.masterEnemy);
   });
   DEMON_BASES.forEach((db, i) => { if (P.warlordsDead.includes(i) && db.warlordEnemy.alive) markDead(db.warlordEnemy); });
+  syncLife();
   placeAtTown(P.lastTown);
   rebuildPlayerRig();
   closeModal();
   $('hud').classList.remove('hidden');
   started = true;
-  banner(TOWNS[P.lastTown].name, s ? 'Your journey continues' : 'Talk to the elder, then head north', 3);
+  if (P.life && P.life.task?.type === 'gather') spawnPickups(P.life.task.n - P.life.task.have + 1);
+  if (P.life && !P.life.task) setTimeout(nextTask, 1500);
+  banner(TOWNS[P.lastTown].name, P.life ? `Age ${P.life.age} · your new life continues` : s ? 'Your journey continues' : 'Talk to the elder, then head north', 3);
   save();
+  updateQuest();
+  // Beat the game before the new world existed? The curse catches up with you now.
+  if (P.bossDead && !P.life) setTimeout(showCurse, 2500);
 }
 
 // ============================================================ Boot
@@ -2482,7 +2907,7 @@ window.__game = {
   renderer, P, enemies, TOWNS, interactables, NINJA_BASES, DEMON_BASES, projectiles,
   get boss() { return boss; }, get ui() { return ui; }, get gfxHigh() { return gfxHigh; },
   setCam(yaw, pitch, dist) { camYaw = yaw; camPitch = pitch; camDist = dist; },
-  unsheath,
+  unsheath, startNewLife, finishTask, get echo() { return echo; }, nwSite, ELEMENTS,
 };
 
 const clock = new THREE.Clock();
@@ -2512,6 +2937,7 @@ function frame() {
     updateRains(dt);
     updateNPCs(dt);
     updatePortals(dt);
+    updatePickups(dt);
     updateEffects(dt);
     updateParticles(dt);
     updateWorldState(dt);

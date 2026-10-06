@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import {
   PATH, ARENA, BOUNDS, TOWNS, TOWN_IDX, NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, REALM_X, ASH_Z,
-  LAKES, WATER_Y, FROST, MAIN_TOWNS,
+  LAKES, WATER_Y, FROST, MAIN_TOWNS, NEW_X, NW, ELEMENTS, NW_TOWNS,
 } from './data.js';
 import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
@@ -59,6 +59,44 @@ for (const t of TOWNS) {
   t.attach = nearestPathPoint(t.x, t.z);
   TRAILS.push([t.x, t.z, t.attach[0], t.attach[1]]);
 }
+// The new world: paths from the Crossroads to each village, and between neighbors.
+const HUB_R = 26;
+NW_TOWNS.forEach((t, k) => {
+  const ux = (t.x - NW.x) / NW.ring, uz = (t.z - NW.z) / NW.ring;
+  t.attach = [NW.x + ux * HUB_R, NW.z + uz * HUB_R];
+  TRAILS.push([t.attach[0], t.attach[1], t.x, t.z]);
+  const n = NW_TOWNS[(k + 1) % NW_TOWNS.length];
+  TRAILS.push([t.x, t.z, n.x, n.z]);
+});
+{
+  const w = ELEMENTS.find(e => e.key === 'water').town;
+  const ux = (w.x - NW.x) / NW.ring, uz = (w.z - NW.z) / NW.ring;
+  // Shifted sideways off the outward path so the lake sits beside it.
+  LAKES.push({ x: w.x + ux * 66 - uz * 30, z: w.z + uz * 66 + ux * 30, r: 26, nw: true });
+}
+const inNewWorld = x => x < NEW_X;
+// Which element's lands a point lies in, by its bearing from the Crossroads.
+function nwSector(x, z) {
+  const a = Math.atan2(z - NW.z, x - NW.x);
+  let best = 0, bd = Infinity;
+  for (const el of ELEMENTS) {
+    const d = Math.abs(Math.atan2(Math.sin(a - el.angle), Math.cos(a - el.angle)));
+    if (d < bd) { bd = d; best = el.index; }
+  }
+  return best;
+}
+// Smooth weights of each element at a point (they sum to 1).
+function nwWeights(x, z, out = []) {
+  const a = Math.atan2(z - NW.z, x - NW.x);
+  let sum = 0;
+  for (const el of ELEMENTS) {
+    const w = Math.pow(Math.max(0, Math.cos(a - el.angle)), 6) + 1e-4;
+    out[el.index] = w; sum += w;
+  }
+  for (let k = 0; k < out.length; k++) out[k] /= sum;
+  return out;
+}
+
 function roadDist(x, z) {
   let m = nearestSeg(x, z).dist;
   for (const [ax, az, bx, bz] of TRAILS) m = Math.min(m, segDist(x, z, ax, az, bx, bz) + 1.5);
@@ -104,8 +142,28 @@ function lakeDist(x, z) {
   for (const l of LAKES) m = Math.min(m, Math.hypot(x - l.x, z - l.z) - l.r);
   return m;
 }
+function nwHeight(x, z) {
+  const d = Math.hypot(x - NW.x, z - NW.z);
+  let carve = 0, lakeFlat = 1;
+  for (const l of LAKES) {
+    if (!l.nw) continue;
+    const ld = Math.hypot(x - l.x, z - l.z);
+    carve = Math.max(carve, 1 - smooth(l.r * 0.5, l.r + 3, ld));
+    lakeFlat = Math.min(lakeFlat, smooth(l.r, l.r + 18, ld));
+  }
+  const sec = ELEMENTS[nwSector(x, z)].key;
+  const amp = sec === 'ice' ? 9 : sec === 'fire' ? 7 : sec === 'shadow' ? 6 : 3.5;
+  const n = (Math.sin(x * 0.027 + 2) * Math.cos(z * 0.021) + Math.sin(x * 0.061) * Math.sin(z * 0.057 + 1) * 0.45) * amp;
+  const f = smooth(4, 22, roadDist(x, z)) * smooth(0, 22, townDist(x, z)) * smooth(HUB_R + 4, HUB_R + 26, d) * lakeFlat;
+  // The island's edge slopes down into the sea.
+  const shore = smooth(NW.r - 40, NW.r + 10, d);
+  let h = Math.max(-1, n) * f;
+  h = lerp(h, -5, shore);
+  return lerp(h, -2.6, carve);
+}
 function height(x, z) {
   if (x > REALM_X) return 0;
+  if (x < NEW_X) return nwHeight(x, z);
   let carve = 0, lakeFlat = 1, shore = 0;
   for (const l of LAKES) {
     const d = Math.hypot(x - l.x, z - l.z);
@@ -282,6 +340,11 @@ function collideStatic(pos, r) {
   }
 }
 function clampBounds(pos) {
+  if (inNewWorld(pos.x)) {
+    const dx = pos.x - NW.x, dz = pos.z - NW.z, d = Math.hypot(dx, dz), max = NW.r - 22;
+    if (d > max) { pos.x = NW.x + dx / d * max; pos.z = NW.z + dz / d * max; }
+    return;
+  }
   const db = demonBaseAt(pos.x, pos.z);
   if (db) {
     const dx = pos.x - db.x, dz = pos.z - db.z, d = Math.hypot(dx, dz), max = DEMON_R - 3;
@@ -522,7 +585,11 @@ const facing = (fx, fz, tx, tz) => Math.atan2(tx - fx, tz - fz);
 
 function buildTown(t) {
   let prev, next;
-  if (t.hamlet) {
+  if (t.nw) {
+    // New-world villages face the Crossroads at the island's center.
+    prev = [NW.x, NW.z];
+    next = [t.x * 2 - NW.x, t.z * 2 - NW.z];
+  } else if (t.hamlet) {
     // Hamlets face down their trail toward the main road.
     prev = t.attach;
     next = [t.x * 2 - t.attach[0], t.z * 2 - t.attach[1]];
@@ -572,15 +639,19 @@ function buildTown(t) {
   interactables.push({ kind: 'elder', town: t, x: ex, z: ez });
 
   const keepClear = [[...at(0, 12), 8], [...at(-9, 12), 8], [hx, hz, 8], [ex, ez, 4]];
+  if (t.nw) buildHomeAndDojo(t, at, keepClear);
   if (t.city) buildCity(t, dx, dz, px, pz, at, keepClear);
   else buildVillage(t, prev, next, keepClear, at);
 
   // Townsfolk wandering the streets.
-  const crowd = t.city ? 18 : t.hamlet ? 3 : 5;
+  const crowd = t.city ? 18 : t.hamlet ? 3 : t.nw ? 8 : 5;
   for (let k = 0; k < crowd; k++) {
+    // New-world villages have children playing among the grown-ups.
+    const child = t.nw && k % 3 === 1;
     const rig = makeHumanoid({
-      cloth: VILLAGER_COLORS[(k + t.index * 2) % VILLAGER_COLORS.length], cloth2: 0x3a3430,
-      hat: k % 3 === 0 ? 'kasa' : k % 2 ? 'bun' : null, skin: [0xe0b48a, 0xc99a72, 0xd8a880][k % 3], scale: wr(0.85, 1.0),
+      cloth: t.nw && k % 2 ? ELEMENTS[t.element].color : VILLAGER_COLORS[(k + t.index * 2) % VILLAGER_COLORS.length], cloth2: 0x3a3430,
+      hat: child ? null : k % 3 === 0 ? 'kasa' : k % 2 ? 'bun' : null, skin: [0xe0b48a, 0xc99a72, 0xd8a880][k % 3],
+      scale: child ? wr(0.55, 0.7) : wr(0.85, 1.0),
     });
     const a = wr(0, Math.PI * 2), rr = wr(0, t.r * 0.4);
     const v = { rig, town: t, pos: new THREE.Vector3(t.x + Math.cos(a) * rr, 0, t.z + Math.sin(a) * rr), target: null, wait: wr(0, 3), facing: 0 };
@@ -705,7 +776,7 @@ function buildVillage(t, prev, next, keepClear, at) {
     let ox = p[0] - t.x, oz = p[1] - t.z;
     const ol = Math.hypot(ox, oz); ox /= ol; oz /= ol;
     const gx = t.x + ox * (t.r - 2), gz = t.z + oz * (t.r - 2);
-    placeObj(makeTorii(1, 0xc0392b), gx, gz, Math.atan2(ox, oz));
+    placeObj(makeTorii(1, t.nw ? ELEMENTS[t.element].torii : 0xc0392b), gx, gz, Math.atan2(ox, oz));
     addCollider(gx - oz * 2.6, gz + ox * 2.6, 0.4);
     addCollider(gx + oz * 2.6, gz - ox * 2.6, 0.4);
     for (const s of [-1, 1]) {
@@ -714,7 +785,9 @@ function buildVillage(t, prev, next, keepClear, at) {
       addCollider(lx, lz, 0.5);
     }
   }
-  if (!t.snow) paddies(t, t.hamlet ? 3 : 6);
+  if (t.nw) interactables.push({ kind: 'well', town: t, x: wx, z: wz });
+  if (!t.snow && !t.nw) paddies(t, t.hamlet ? 3 : 6);
+  if (t.nw && ELEMENTS[t.element].key === 'water') paddies(t, 4);
 }
 
 // A walled city laid out on a grid of paved streets. In the city's own frame, u runs
@@ -1009,6 +1082,27 @@ function buildGrass() {
     cell: 32, range: 60, shadow: false, grass: true,
     tint: c => c.setHSL(0.2 + Math.random() * 0.07, 0.35 + Math.random() * 0.2, 0.5 + Math.random() * 0.15),
   });
+  // New-world grass, tinted by each element's lands: violet, rust, gold, sea-green.
+  const nwMats = [], nwSec = [];
+  for (let i = 0; i < 260000 && nwMats.length < 70000; i++) {
+    const a = wr(0, Math.PI * 2), r = Math.sqrt(wrand()) * (NW.r - 40);
+    const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+    const sec = nwSector(x, z), key = ELEMENTS[sec].key;
+    if (key === 'ice' || (key === 'fire' && wrand() < 0.7)) continue;
+    if (roadDist(x, z) < 3.5 || townDist(x, z) < -3 || r < HUB_R + 2 || lakeDist(x, z) < 0) continue;
+    dummy.position.set(x, height(x, z) - 0.05, z);
+    dummy.rotation.set(0, wr(0, Math.PI), 0);
+    const s = key === 'golden' ? wr(1.3, 2.2) : wr(0.8, 1.6);
+    dummy.scale.set(s, s * wr(0.7, 1.3), s);
+    dummy.updateMatrix();
+    nwMats.push(dummy.matrix.clone());
+    nwSec.push(sec);
+  }
+  const HUE = { shadow: [0.75, 0.35, 0.42], fire: [0.06, 0.5, 0.42], golden: [0.13, 0.75, 0.62], water: [0.32, 0.45, 0.48] };
+  chunkedInstances(blade, grassMat, nwMats, {
+    cell: 32, range: 60, shadow: false, grass: true,
+    tint: (c, i) => { const [h, sat, l] = HUE[ELEMENTS[nwSec[i]].key]; c.setHSL(h + (Math.random() - 0.5) * 0.04, sat, l + Math.random() * 0.12); },
+  });
 }
 
 // ============================================================ Sky, clouds, mountain
@@ -1276,6 +1370,294 @@ function buildDemonBase(db, tier) {
   mergeStatic(g);
 }
 
+// ============================================================ The new world
+// Positions the game logic needs: the Crossroads, the echo's lair, each home and dojo.
+const nwSite = { hub: { x: NW.x, z: NW.z }, homes: [], dummies: [], herbs: [] };
+
+// The player's family home and the village dojo, in every new-world village.
+function buildHomeAndDojo(t, at, keepClear) {
+  const el = ELEMENTS[t.element];
+  const [hx, hz] = at(-15, -7);
+  const home = makeHouse(el.wall, el.key === 'ice' ? 0xdfe6ee : el.roof, 7, 5.5);
+  home.scale.y = 1.15;
+  const face = facing(hx, hz, t.x, t.z);
+  placeObj(home, hx, hz, face);
+  addCollider(hx, hz, 4.4);
+  const door = [hx + Math.sin(face) * 5, hz + Math.cos(face) * 5];
+  // Mother and father wait by the door.
+  const parents = [];
+  [[0x8a4a6a, 'bun', -1.3], [0x3a4a5a, null, 1.3]].forEach(([cloth, hat, side]) => {
+    const p = makeHumanoid({ cloth, cloth2: 0x2a2420, hat, skin: 0xe0b48a });
+    const px = door[0] + Math.cos(face) * side, pz = door[1] - Math.sin(face) * side;
+    placeObj(p.root, px, pz, face, false);
+    staticNPCs.push(p);
+    addCollider(px, pz, 0.45);
+    parents.push(p);
+  });
+  interactables.push({ kind: 'home', town: t, x: door[0] + Math.sin(face) * 1.4, z: door[1] + Math.cos(face) * 1.4 });
+  nwSite.homes[t.element] = { x: door[0] + Math.sin(face) * 2, z: door[1] + Math.cos(face) * 2, facing: face };
+  keepClear.push([hx, hz, 8]);
+
+  // Dojo yard: two straw dummies, a sensei and a weapon rack of bokken.
+  const [dx, dz] = at(14, 2);
+  const dojo = new THREE.Group();
+  const yard = new THREE.Mesh(new THREE.CircleGeometry(5.5, 24).rotateX(-Math.PI / 2), smat(0xb8a27a, { roughness: 1 }));
+  yard.position.set(dx, height(dx, dz) + 0.05, dz);
+  yard.receiveShadow = true;
+  dojo.add(yard);
+  const spots = [];
+  for (const [u, v] of [[-2, 1.5], [2, 1.5]]) {
+    const [x, z] = at(14 + u, 2 + v);
+    const d = makeDummy();
+    d.position.set(x, height(x, z), z);
+    dojo.add(d);
+    addCollider(x, z, 0.4);
+    spots.push({ x, z });
+  }
+  scene.add(dojo);
+  mergeStatic(dojo);
+  nwSite.dummies[t.element] = spots;
+  const [sx, sz] = at(14, -2.5);
+  const sensei = makeHumanoid({ cloth: el.color, cloth2: 0x1a1a1a, hat: 'band', bandColor: el.color, weapon: 'katana', skin: 0xd6a37e });
+  placeObj(sensei.root, sx, sz, facing(sx, sz, dx, dz), false);
+  staticNPCs.push(sensei);
+  addCollider(sx, sz, 0.5);
+  interactables.push({ kind: 'sensei', town: t, x: sx, z: sz });
+  keepClear.push([dx, dz, 7]);
+}
+
+function buildNewWorld() {
+  const W = [0, 0, 0, 0, 0];
+  // ---- Terrain disc, colored by element.
+  const size = NW.r * 2 + 60, seg = Math.round(size / 4);
+  const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2).translate(NW.x, 0, NW.z);
+  const pos = geo.attributes.position, colors = new Float32Array(pos.count * 3);
+  const c = new THREE.Color(), tmp = new THREE.Color(), tmp2 = new THREE.Color();
+  const dirt = new THREE.Color(0x8a7050), plaza = new THREE.Color(0xb5a07a), sand = new THREE.Color(0xc8b88a), stone = new THREE.Color(0x9a948a);
+  const grounds = ELEMENTS.map(el => el.ground.map(g => new THREE.Color(g)));
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const h = height(x, z);
+    pos.setY(i, h);
+    nwWeights(x, z, W);
+    const n = clamp(Math.sin(x * 0.13) * Math.cos(z * 0.11) * 0.5 + 0.5 + (wrand() - 0.5) * 0.25, 0, 1);
+    c.setRGB(0, 0, 0);
+    for (let k = 0; k < 5; k++) { tmp.copy(grounds[k][0]).lerp(grounds[k][1], n); c.r += tmp.r * W[k]; c.g += tmp.g * W[k]; c.b += tmp.b * W[k]; }
+    const d = Math.hypot(x - NW.x, z - NW.z);
+    c.lerp(dirt, (1 - smooth(2.5, 5, roadDist(x, z))) * 0.8);
+    c.lerp(plaza, (1 - smooth(-4, 2, townDist(x, z))) * 0.6);
+    c.lerp(stone, 1 - smooth(HUB_R - 2, HUB_R + 1, d));
+    c.lerp(sand, smooth(NW.r - 45, NW.r - 25, d) * 0.9);
+    if (lakeDist(x, z) < 5) c.lerp(sand, (1 - smooth(1, 5, lakeDist(x, z))) * 0.7);
+    tmp2.copy(c);
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+  detailTerrain(mat);
+  const ground = new THREE.Mesh(geo, mat);
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // ---- The sea around the island.
+  const seaNormal = waterNormalTex().clone(); seaNormal.repeat.set(60, 60); seaNormal.needsUpdate = true;
+  const sea = new THREE.MeshStandardMaterial({ color: 0x1a3e52, roughness: 0.08, metalness: 0, normalMap: seaNormal, normalScale: new THREE.Vector2(0.3, 0.3) });
+  waterMats.push(sea);
+  const seaMesh = new THREE.Mesh(new THREE.RingGeometry(NW.r - 60, NW.r + 900, 64, 1).rotateX(-Math.PI / 2), sea);
+  seaMesh.position.set(NW.x, -1.6, NW.z);
+  scene.add(seaMesh);
+
+  // ---- The Crossroads: a sacred tree in a stone circle, where the echo waits.
+  const hub = new THREE.Group();
+  hub.position.set(NW.x, 0, NW.z);
+  const bark = new THREE.MeshStandardMaterial({ color: 0x5a4030, map: barkTex(), bumpMap: barkTex(), bumpScale: 2, roughness: 0.95 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 3.2, 16, 14), bark);
+  trunk.position.y = 8; trunk.castShadow = true;
+  hub.add(trunk);
+  for (let k = 0; k < 5; k++) {
+    const a = ELEMENTS[k].angle;
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 1.2, 6, 8), bark);
+    root.position.set(Math.cos(a) * 3, 1, Math.sin(a) * 3);
+    root.rotation.set(Math.sin(a) * 1.1, 0, -Math.cos(a) * 1.1);
+    hub.add(root);
+  }
+  const bloom = smat(0xf6d8ec, { emissive: 0x4a1a3a, emissiveIntensity: 0.4 });
+  for (let k = 0; k < 9; k++) {
+    const a = k * 2.4, r = k ? 5.5 : 0;
+    const crown = new THREE.Mesh(lumpy(new THREE.SphereGeometry(k ? 4.5 : 6.5, 14, 10), 0.3, k + 3), bloom);
+    crown.position.set(Math.cos(a) * r, 17 + (k % 3) * 1.6, Math.sin(a) * r);
+    crown.castShadow = true;
+    hub.add(crown);
+  }
+  // Sacred rope around the trunk, and five element stones around the circle.
+  const rope = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.22, 8, 28).rotateX(Math.PI / 2), smat(0xe8dcb0));
+  rope.position.y = 5;
+  hub.add(rope);
+  for (const el of ELEMENTS) {
+    const a = el.angle + Math.PI / ELEMENTS.length;
+    const st = new THREE.Mesh(new THREE.BoxGeometry(1.4, 3.2, 1), smat(0x6a665e, { flatShading: true }));
+    st.position.set(Math.cos(a) * (HUB_R - 3), 1.6, Math.sin(a) * (HUB_R - 3));
+    st.rotation.y = -a;
+    st.castShadow = true;
+    hub.add(st);
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.45), smat(el.color, { emissive: el.color, emissiveIntensity: 1.6 }));
+    gem.position.set(Math.cos(a) * (HUB_R - 3), 3.8, Math.sin(a) * (HUB_R - 3));
+    hub.add(gem);
+    addCollider(NW.x + Math.cos(a) * (HUB_R - 3), NW.z + Math.sin(a) * (HUB_R - 3), 0.9);
+  }
+  scene.add(hub);
+  mergeStatic(hub);
+  addCollider(NW.x, NW.z, 3.4);
+  nwSite.echo = { x: NW.x, z: NW.z + 14 };
+
+  // ---- Landmarks around each village.
+  for (const el of ELEMENTS) buildElementLands(el);
+  buildNwTrees();
+}
+
+// Scenery that gives each element's lands their own character.
+function buildElementLands(el) {
+  const t = el.town, g = new THREE.Group();
+  const ux = Math.cos(el.angle), uz = Math.sin(el.angle);
+  const spot = (minR, maxR, tries = 30) => {
+    for (let k = 0; k < tries; k++) {
+      const a = el.angle + wr(-0.55, 0.55), r = wr(minR, maxR);
+      const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+      if (roadDist(x, z) > 7 && townDist(x, z) > 6 && lakeDist(x, z) > 4) return [x, z];
+    }
+    return null;
+  };
+  const add = (m, x, z, rad, y = 0) => { m.position.set(x, height(x, z) + y, z); g.add(m); if (rad) addCollider(x, z, rad); };
+  if (el.key === 'shadow') {
+    const obs = smat(0x1a1622, { roughness: 0.4, flatShading: true }), glow = smat(0xa070ff, { emissive: 0x8a4aff, emissiveIntensity: 2.2 });
+    for (let k = 0; k < 16; k++) {
+      const p = spot(60, 250); if (!p) continue;
+      const h = wr(3, 7);
+      const o = new THREE.Mesh(new THREE.ConeGeometry(wr(0.7, 1.3), h, 5), obs);
+      o.castShadow = true;
+      add(o, p[0], p[1], 1.1, h / 2 - 0.3);
+      const cr = new THREE.Mesh(new THREE.OctahedronGeometry(0.4), glow);
+      add(cr, p[0] + 0.9, p[1], 0, 0.5);
+    }
+  } else if (el.key === 'fire') {
+    const lava = smat(0xff6a1a, { emissive: 0xff4000, emissiveIntensity: 2.4 }), rock = smat(0x2a201c, { flatShading: true });
+    for (let k = 0; k < 14; k++) {
+      const p = spot(60, 250); if (!p) continue;
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 1, 9, 1, true), rock);
+      add(ring, p[0], p[1], 2, 0.3);
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(2.1, 12).rotateX(-Math.PI / 2), lava);
+      add(pool, p[0], p[1], 0, 0.5);
+    }
+    // A great forge chimney outside the village.
+    const fx = t.x + ux * 48, fz = t.z + uz * 48 + 14;
+    const chim = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 12, 10), tmat('stone', 0x8a6a5a, 2, 3));
+    chim.castShadow = true;
+    add(chim, fx, fz, 2.4, 6);
+  } else if (el.key === 'golden') {
+    placeObj(makePagoda(0xb8901a), t.x + ux * 54 + uz * 18, t.z + uz * 54 - ux * 18, el.angle);
+    addCollider(t.x + ux * 54 + uz * 18, t.z + uz * 54 - ux * 18, 5);
+    // Wheat fields: rows of tall golden stalks.
+    const stalks = [], dummy = new THREE.Object3D();
+    for (let f = 0; f < 6; f++) {
+      const p = spot(90, 240); if (!p) continue;
+      const rot = wr(0, Math.PI);
+      for (let i = 0; i < 14; i++) for (let j = 0; j < 10; j++) {
+        const lx = (i - 7) * 0.8, lz = (j - 5) * 0.9;
+        const x = p[0] + Math.cos(rot) * lx - Math.sin(rot) * lz, z = p[1] + Math.sin(rot) * lx + Math.cos(rot) * lz;
+        dummy.position.set(x, height(x, z), z);
+        dummy.rotation.set(0, wr(0, 6), 0);
+        dummy.scale.setScalar(wr(0.85, 1.15));
+        dummy.updateMatrix();
+        stalks.push(dummy.matrix.clone());
+      }
+    }
+    const wheat = mergeGeos([0, 1, 2, 3, 4].map(k => new THREE.ConeGeometry(0.035, 1.2, 3).translate(Math.cos(k * 1.3) * 0.1, 0.6, Math.sin(k * 1.3) * 0.1)));
+    const wm = new THREE.MeshLambertMaterial({ color: 0xe8c050 });
+    addWind(wm, 0.3, 0.5);
+    chunkedInstances(wheat, wm, stalks, { cell: 96, range: 150, shadow: false });
+  } else if (el.key === 'ice') {
+    const ice = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, emissive: 0x2a7ab0, emissiveIntensity: 0.5, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.85, flatShading: true });
+    for (let k = 0; k < 22; k++) {
+      const p = spot(50, 260); if (!p) continue;
+      const cl = new THREE.Group();
+      for (let j = 0; j < 4; j++) {
+        const h = wr(1.5, 4.5);
+        const cr = new THREE.Mesh(new THREE.ConeGeometry(wr(0.3, 0.6), h, 5), ice);
+        cr.position.set(wr(-0.8, 0.8), h / 2 - 0.2, wr(-0.8, 0.8));
+        cr.rotation.set(wr(-0.3, 0.3), wr(0, 6), wr(-0.3, 0.3));
+        cl.add(cr);
+      }
+      add(cl, p[0], p[1], 1);
+    }
+  } else if (el.key === 'water') {
+    const lake = LAKES.find(l => l.nw);
+    const pad = smat(0x3a7a3a), flower = smat(0xffb8d8, { emissive: 0x401020, emissiveIntensity: 0.4 });
+    for (let k = 0; k < 26; k++) {
+      const a = wr(0, Math.PI * 2), r = wr(3, lake.r - 3);
+      const x = lake.x + Math.cos(a) * r, z = lake.z + Math.sin(a) * r;
+      const lp = new THREE.Mesh(new THREE.CylinderGeometry(wr(0.5, 0.9), wr(0.5, 0.9), 0.04, 10), pad);
+      lp.position.set(x, WATER_Y + 0.03, z);
+      g.add(lp);
+      if (k % 3 === 0) { const fl = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), flower); fl.position.set(x, WATER_Y + 0.18, z); g.add(fl); }
+    }
+    // A wooden pier out into the lake.
+    const dx = t.x - lake.x, dz = t.z - lake.z, dl = Math.hypot(dx, dz);
+    const pier = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.25, 14), tmat('wood', 0x8a6a4a, 1, 4));
+    const px = lake.x + dx / dl * (lake.r - 4), pz = lake.z + dz / dl * (lake.r - 4);
+    pier.position.set(px, 0.25, pz);
+    pier.rotation.y = Math.atan2(dx, dz);
+    pier.castShadow = true; pier.receiveShadow = true;
+    g.add(pier);
+  }
+  scene.add(g);
+  mergeStatic(g);
+}
+
+// Trees of the new world, shaped and colored by element.
+function buildNwTrees() {
+  const dummy = new THREE.Object3D();
+  const round = [], pines = [], dead = [];
+  const roundSec = [], pineSec = [];
+  for (let i = 0; i < 9000; i++) {
+    const a = wr(0, Math.PI * 2), r = Math.sqrt(wrand()) * (NW.r - 45);
+    const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+    if (r < HUB_R + 10 || roadDist(x, z) < 7 || townDist(x, z) < 6 || lakeDist(x, z) < 3) continue;
+    const sec = nwSector(x, z), key = ELEMENTS[sec].key;
+    const dens = { shadow: 0.55, fire: 0.25, golden: 0.3, ice: 0.6, water: 0.45 }[key];
+    if (wrand() > dens) continue;
+    const s = wr(0.8, 1.35);
+    dummy.position.set(x, height(x, z) - 0.1, z);
+    dummy.rotation.set(0, wr(0, Math.PI * 2), 0);
+    dummy.scale.set(s, s * wr(0.9, 1.2), s);
+    dummy.updateMatrix();
+    const m = dummy.matrix.clone();
+    if (key === 'ice' || (key === 'shadow' && wrand() < 0.4)) { pines.push(m); pineSec.push(sec); }
+    else if (key === 'fire') dead.push(m);
+    else { round.push(m); roundSec.push(sec); }
+    addCollider(x, z, 0.5 * s);
+  }
+  const barkMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2c, map: barkTex(), roughness: 0.95 });
+  const trunk = new THREE.CylinderGeometry(0.22, 0.4, 4, 7).translate(0, 2, 0);
+  const crown = mergeGeos([
+    lumpy(new THREE.SphereGeometry(2.1, 12, 9), 0.3, 1).translate(0, 4.8, 0),
+    lumpy(new THREE.SphereGeometry(1.5, 10, 8), 0.3, 2).translate(1.1, 4.0, 0.4),
+    lumpy(new THREE.SphereGeometry(1.4, 10, 8), 0.3, 3).translate(-0.9, 4.2, -0.6),
+  ]);
+  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
+  addWind(leafMat, 0.12, 0.05);
+  const LEAF = ELEMENTS.map(el => new THREE.Color(el.leaf));
+  const tint = sec => (col, i) => { col.copy(LEAF[sec[i]]).offsetHSL((Math.sin(i * 7.1) * 0.5) * 0.04, 0, (Math.sin(i * 3.3)) * 0.06); };
+  const all = [...round, ...pines, ...dead];
+  if (all.length) chunkedInstances(trunk, barkMat, all, { cell: 96, range: 240 });
+  if (round.length) chunkedInstances(crown, leafMat, round, { cell: 96, range: 240, tint: tint(roundSec) });
+  const pineGeo = mergeGeos([0, 1, 2, 3].map(k => new THREE.ConeGeometry(2.2 - k * 0.45, 2.2, 8).translate(0, 2.4 + k * 1.3, 0)));
+  const snowTint = (col, i) => { col.copy(LEAF[pineSec[i]]); if (ELEMENTS[pineSec[i]].key === 'ice') col.lerp(new THREE.Color(0xeef4fa), 0.55); };
+  if (pines.length) chunkedInstances(pineGeo, leafMat, pines, { cell: 96, range: 240, tint: snowTint });
+  const branches = mergeGeos([0, 1, 2].map(k => new THREE.CylinderGeometry(0.06, 0.14, 2.2, 5).translate(0, 1.1, 0).rotateZ(0.7).rotateY(k * 2.1).translate(0, 3, 0)));
+  if (dead.length) chunkedInstances(branches, new THREE.MeshStandardMaterial({ color: 0x1e1612, roughness: 1 }), dead, { cell: 96, range: 240 });
+}
+
 function buildWorld(sc) {
   scene = sc;
   buildSky();
@@ -1288,9 +1670,10 @@ function buildWorld(sc) {
   buildArena();
   NINJA_BASES.forEach(buildNinjaBase);
   DEMON_BASES.forEach(buildDemonBase);
+  buildNewWorld();
 }
 
 export {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, ninjaPortals, segDist,
 };

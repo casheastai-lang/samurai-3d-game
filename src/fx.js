@@ -203,6 +203,9 @@ const AMB_MODES = {
   ash:    { color: 0x9a8f88, size: 0.18, fall: -0.4, drift: 0.6, blend: THREE.NormalBlending },
   snow:   { color: 0xf4f8ff, size: 0.16, fall: -1.6, drift: 0.9, blend: THREE.NormalBlending },
   fireflies: { color: 0xd8ff6a, size: 0.14, fall: 0.05, drift: 0.7, blend: THREE.AdditiveBlending },
+  shadow: { color: 0xa070ff, size: 0.13, fall: 0.25, drift: 0.5, blend: THREE.AdditiveBlending },
+  gold:   { color: 0xffc830, size: 0.2, fall: -0.7, drift: 1.3, blend: THREE.NormalBlending },
+  mist:   { color: 0xbfe8ff, size: 0.16, fall: 0.15, drift: 0.4, blend: THREE.AdditiveBlending },
   none:   null,
 };
 export function updateAmbient(dt, center, mode, time) {

@@ -60,6 +60,33 @@ Three hidden hamlets sit at the end of side trails off the main road: Takenoko (
 
 Every shop also sells armor, charms, potions and six outfits: Wandering Ronin, Crimson Samurai, Shadow Ninja, White Wolf, Demon Hunter and Golden Shogun.
 
+### After the Demon King: a new life
+
+Beating Shuten-doji isn't the end. With his last breath he curses you, and you wake as a **six-year-old child** on an island in another world.
+Five villages live there around a great sacred tree at the Crossroads. Pick the one that raises you; its gift lasts your whole life:
+
+| Village | Element | Gift | Heirloom blade at 16 |
+| --- | --- | --- | --- |
+| Kagemura | Shadow | Run 10% faster, longer dodge rolls | Kagekiri (demonbane) |
+| Homuramura | Fire | +15% damage | Homura (burn) |
+| Kinmura | Golden | +50% gold | Kinryu (shock) |
+| Koorimura | Ice | Take 15% less damage | Hyoga (frost) |
+| Mizumura | Water | Health slowly heals on its own | Suigetsu (leech) |
+
+You grow up one year for each life task you finish. The tracker under the minimap shows your age and current task:
+- fetch water from the well for your family;
+- gather herbs and treasures around the village;
+- train on the dojo's straw dummies;
+- carry letters to the other villages;
+- drive off spirit imps, and later wild oni.
+
+You start with an oak bokken. You get a steel katana at 12, and you grow a little taller every birthday.
+
+At 16 the elder holds your coming-of-age ceremony and gives you the village's heirloom blade. Then the **Echo of Shuten-doji** wakes beneath the sacred tree, and you finish what you started.
+After that your life goes on: take jobs for gold and grow old in your village. Your hair turns gray at 45.
+
+Your home is in your village: talk to your family by the door, and sleep there to heal and save.
+
 ### Ninja bases and demon fortresses
 
 Each region has a walled ninja base off the road. Ninjas are fast, dodge your attacks and throw shurikens, so block or parry them.

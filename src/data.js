@@ -187,6 +187,73 @@ TOWNS.forEach((t, i) => {
   if (i < MAIN_TOWNS) { t.x = PATH[TOWN_IDX[i]][0]; t.z = PATH[TOWN_IDX[i]][1]; }
   t.r = t.city ? CITY_R : t.hamlet ? HAMLET_R : TOWN_R;
 });
+// ============================================================ The new world
+// After the Demon King falls, his curse throws the hero into another world: an island
+// of five villages, one for each element, where they are reborn as a child.
+export const NEW_X = -700;
+export const NW = { x: -1150, z: -600, r: 300, ring: 150 };
+export const ELEMENTS = [
+  {
+    key: 'shadow', name: 'Shadow', village: 'Kagemura', kanji: '影', color: 0x9a6ae0, css: '#b48cff',
+    roof: 0x231a30, wall: 0x6a6276, torii: 0x2c1a40, ground: [0x2c2a3a, 0x3e3650], leaf: 0x4a2a6a,
+    sky: { top: 0x150c2a, hor: 0x5a4a7a, sun: 0xc8a8ff, hemi: 0.42 }, ambient: 'shadow', blade: 'kagekiri',
+    perk: 'Shadow-step: you run 10% faster and your dodge rolls last longer.',
+    desc: 'A village of ninja families under an endless dusk. Purple lanterns, black roofs, quiet feet.',
+    parents: ['Mother Yoru', 'Father Kage'], sensei: 'Sensei Kurenai', item: 'shadow lilies',
+  },
+  {
+    key: 'fire', name: 'Fire', village: 'Homuramura', kanji: '炎', color: 0xff6a2a, css: '#ff8a4a',
+    roof: 0x7a1e14, wall: 0xe8c8a0, torii: 0xd0301a, ground: [0x5a3424, 0x6e4430], leaf: 0x8a3a1a,
+    sky: { top: 0x5a1e10, hor: 0xe09060, sun: 0xffb070, hemi: 0.5 }, ambient: 'embers', blade: 'homura',
+    perk: 'Burning spirit: your attacks deal 15% more damage.',
+    desc: 'Smiths and fire-dancers on a warm volcanic slope. The forges never go out.',
+    parents: ['Mother Akane', 'Father Tetsu'], sensei: 'Sensei Enji', item: 'fire peppers',
+  },
+  {
+    key: 'golden', name: 'Golden', village: 'Kinmura', kanji: '金', color: 0xffc830, css: '#ffd860',
+    roof: 0x9a7a1a, wall: 0xf4e8c8, torii: 0xd8a020, ground: [0x8a7a3a, 0xa8964a], leaf: 0xe8b830,
+    sky: { top: 0x3a68b0, hor: 0xf0d8a0, sun: 0xffe0a0, hemi: 0.6 }, ambient: 'gold', blade: 'kinryu',
+    perk: 'Golden fortune: you find 50% more gold.',
+    desc: 'Rich merchants and wheat fields under ginkgo trees that never lose their gold.',
+    parents: ['Mother Kogane', 'Father Daikoku'], sensei: 'Sensei Hikari', item: 'golden ginkgo leaves',
+  },
+  {
+    key: 'ice', name: 'Ice', village: 'Koorimura', kanji: '氷', color: 0x8ad8ff, css: '#9adcff',
+    roof: 0xdfe8f0, wall: 0xc8d4de, torii: 0x4a7aa0, ground: [0xd8e2ea, 0xeef2f6], leaf: 0x2c5a48,
+    sky: { top: 0x5a7aa8, hor: 0xdce8f2, sun: 0xeaf4ff, hemi: 0.62 }, ambient: 'snow', blade: 'hyoga',
+    perk: 'Frost skin: you take 15% less damage.',
+    desc: 'Hardy hunters in the snow, among frozen pines and ice crystals that glow at night.',
+    parents: ['Mother Yuki', 'Father Fuyu'], sensei: 'Sensei Shimo', item: 'ice crystals',
+  },
+  {
+    key: 'water', name: 'Water', village: 'Mizumura', kanji: '水', color: 0x3ab0e0, css: '#5ac8f0',
+    roof: 0x1a4a6a, wall: 0xe0ecef, torii: 0x2a8ab0, ground: [0x3a6a48, 0x4a7e56], leaf: 0x3a8a6a,
+    sky: { top: 0x2a6ab0, hor: 0xc8e4ee, sun: 0xfff0d8, hemi: 0.58 }, ambient: 'mist', blade: 'suigetsu',
+    perk: 'Flowing life: your health slowly heals on its own.',
+    desc: 'Fisherfolk and healers around a great lotus lake. Bridges, boats and calm water.',
+    parents: ['Mother Nami', 'Father Kawa'], sensei: 'Sensei Mizuki', item: 'river pearls',
+  },
+];
+ELEMENTS.forEach((el, k) => {
+  const a = -Math.PI / 2 + (k / ELEMENTS.length) * Math.PI * 2;
+  el.angle = a;
+  el.index = k;
+  const t = {
+    name: el.village, nw: true, element: k, wall: el.wall, roof: el.roof, snow: el.key === 'ice',
+    x: NW.x + Math.cos(a) * NW.ring, z: NW.z + Math.sin(a) * NW.ring, r: TOWN_R + 6, index: TOWNS.length,
+    shops: [shop(el.name + ' Village Store', 'The village merchant', ['potion', 'elixir', 'w:steel', 'w:kaze', 'w:tama', 'b:yumi', 'b:lacquered', 'a:leather', 'a:iron', 'c:stamina', 'c:vitality'])],
+    elderTitle: 'Elder of ' + el.village,
+    elder: [
+      `Welcome to ${el.village}, little one. The ${el.name} village has watched over this island since the first dawn.`,
+      'Five villages share the island: Shadow, Fire, Golden, Ice and Water. Paths link each one to its neighbors and to the great tree at the Crossroads.',
+      'Spirit imps haunt the wilds between villages. Stay on the paths until your sensei says you are ready.',
+    ],
+  };
+  el.town = t;
+  TOWNS.push(t);
+});
+export const NW_TOWNS = ELEMENTS.map(el => el.town);
+
 // Save files from before the cities were added stored towns by their old position.
 export const OLD_TOWN_ORDER = [0, 1, 3, 5];
 
@@ -211,6 +278,12 @@ export const WEAPONS = {
   shadow:    { name: 'Shadowfang', atk: 30, price: 0, color: 0x404050, glow: 0x6a2aff, effect: 'leech', speed: 1.15, desc: 'Taken from Gozu. Fast, and leeches life.', reward: true },
   bloodmoon: { name: 'Blood Moon', atk: 42, price: 0, color: 0xff3030, glow: 0xc00000, effect: 'burn', style: 'jagged', desc: "Taken from Mezu. Burns with a crimson fire.", reward: true },
   celestial: { name: 'Celestial Blade', atk: 52, price: 0, color: 0xffffff, glow: 0x9ad8ff, effect: 'shock', len: 1.15, desc: 'Taken from Ibaraki. Calls down the storm.', reward: true },
+  bokken:    { name: 'Oak Bokken', atk: 3, price: 0, color: 0x9a6a3a, glow: 0x000000, desc: 'A child\'s wooden practice sword.', reward: true },
+  kagekiri:  { name: 'Kagekiri, Shadow Cutter', atk: 46, price: 0, color: 0x8a6ad0, glow: 0x3a0a8a, effect: 'demonbane', desc: 'The heirloom blade of Kagemura. It drinks in the dark.', reward: true },
+  homura:    { name: 'Homura, Flame of the Hearth', atk: 48, price: 0, color: 0xffb080, glow: 0xff3a00, effect: 'burn', desc: 'The heirloom blade of Homuramura. Always warm to the touch.', reward: true },
+  kinryu:    { name: 'Kinryu, the Golden Dragon', atk: 48, price: 0, color: 0xffe080, glow: 0xc09000, effect: 'shock', desc: 'The heirloom blade of Kinmura. It crackles like summer storms.', reward: true },
+  hyoga:     { name: 'Hyoga, Glacier Fang', atk: 46, price: 0, color: 0xdff4ff, glow: 0x40a0ff, effect: 'frost', desc: 'The heirloom blade of Koorimura. Frost gathers on its edge.', reward: true },
+  suigetsu:  { name: 'Suigetsu, Moon on Water', atk: 46, price: 0, color: 0xbfe8ff, glow: 0x1a70b0, effect: 'leech', desc: 'The heirloom blade of Mizumura. Its cuts heal the one who holds it.', reward: true },
   yamata:    { name: 'Yamata Dragonblade', atk: 62, price: 0, color: 0x80ffb0, glow: 0x00c060, effect: 'demonbane', len: 1.3, reach: 0.6, style: 'nodachi', desc: 'Taken from Kuro. The bane of all demons.', reward: true },
 };
 
@@ -282,6 +355,7 @@ export const BOSS_TALK = {
   warlord1: { lines: ['Mezu has watched you since the river. You fight well... for meat.', 'My brother Gozu fell? Then I will be twice as cruel.'], ask: 'My club is long and my patience short. Do not stand still in front of me.', bow: 'Respect, from meat? Mezu will remember it. Briefly.', taunt: 'Your brother squealed when he fell.', tauntReply: 'YOU WILL SCREAM LOUDER!' },
   warlord2: { lines: ['Ibaraki lost an arm to a samurai once. Ibaraki took his head in return.', 'Come. Let us see what you will lose.'], ask: 'I slam the earth when you are close. Jump, or roll out of the ring.', bow: 'That samurai bowed too. Then he begged.', taunt: 'One arm? This should be quick.', tauntReply: 'I will rip off BOTH of yours!' },
   warlord3: { lines: ['Kuro burns. Kuro has always burned.', 'The Demon King gave me this flame. Through me, he sees you now.'], ask: 'My flame makes me relentless. Parry my blows, and my guard breaks.', bow: 'The king will be pleased you died with grace.', taunt: 'Then let him watch his pet go out.', tauntReply: 'BURN, RONIN! BURN!' },
+  echo: { lines: ['Did you think death would free you of me, little samurai?', 'My curse threw you here, and my shadow followed. I have waited your whole childhood.', 'Now you are grown. Now I can finish what I began.'], ask: 'I am only an echo, but I remember every blow. I charge, and I slam the earth. Roll, or jump.', bow: 'You bow to the demon who stole your old life? Then I will take this one too.', taunt: 'I beat you once, old man. I can beat your shadow.', tauntReply: 'THEN I WILL DEVOUR YOUR NEW LIFE!' },
   boss: { lines: ['So. The ronin who walks my road.', 'You slew my masters, my warlords, my children. You stand in my shrine with their blood on your blade.', 'I am Shuten-doji. Kneel, and I will make your death quick.'], ask: 'Hah. I will charge you down, and when I slam the earth, nothing stands. Even you.', bow: 'You bow but do not kneel. Interesting. Then fight, and be remembered.', taunt: 'I did not walk this far to kneel to a drunk demon.', tauntReply: 'INSOLENCE! I will drink from your skull!' },
 };
 
@@ -302,7 +376,12 @@ export const ENEMIES = {
   warlord:  { name: 'Demon Warlord', hp: 700, dmg: 30, speed: 4.6, range: 3.8, scale: 2.4, radius: 1.4, xp: 400, gold: [200, 260], windup: 0.6, recover: 0.7, aggro: 30, poise: 3 },
   boss:     { name: 'Shuten-doji, the Demon King', hp: 2600, dmg: 38, speed: 4.6, range: 5.2, scale: 3.4, radius: 2.2, xp: 1500, gold: [1000, 1000], windup: 0.75, recover: 0.9, aggro: 36, poise: 3 },
 };
-export const DEMON_TYPES = new Set(['oni', 'blueOni', 'captain', 'warlord', 'boss']);
+ENEMIES.echo = { name: 'Echo of Shuten-doji', hp: 2200, dmg: 30, speed: 4.6, range: 5, scale: 3.2, radius: 2.1, xp: 1200, gold: [800, 800], windup: 0.75, recover: 0.95, aggro: 34, poise: 3 };
+for (const el of ELEMENTS) {
+  ENEMIES['imp_' + el.key] = { name: el.name + ' Imp', hp: 26, dmg: 5, speed: 3.6, range: 1.7, scale: 0.72, radius: 0.45, xp: 10, gold: [3, 7], windup: 0.65, recover: 0.95, aggro: 11, poise: 0 };
+  ENEMIES['beast_' + el.key] = { name: el.name + ' Oni', hp: 150, dmg: 16, speed: 4.0, range: 2.6, scale: 1.5, radius: 0.85, xp: 60, gold: [25, 40], windup: 0.6, recover: 0.8, aggro: 16, poise: 1 };
+}
+export const DEMON_TYPES = new Set(['oni', 'blueOni', 'captain', 'warlord', 'boss', 'echo', ...Object.keys(ENEMIES).filter(k => k.startsWith('imp_') || k.startsWith('beast_'))]);
 
 export const TIER_MIX = [
   [['bandit', 0.8], ['oni', 0.2]],
