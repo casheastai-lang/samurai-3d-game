@@ -2717,8 +2717,12 @@ function drawNwMap(ctx, X, Z, scale, full) {
   ctx.strokeStyle = '#c4a874'; ctx.lineWidth = full ? 3 : 2;
   for (const t of NW_TOWNS) {
     ctx.beginPath(); ctx.moveTo(X(t.attach[0]), Z(t.attach[1])); ctx.lineTo(X(t.x), Z(t.z)); ctx.stroke();
-    const n = NW_TOWNS[(t.element + 1) % 5];
-    ctx.beginPath(); ctx.moveTo(X(t.x), Z(t.z)); ctx.lineTo(X(n.x), Z(n.z)); ctx.stroke();
+    for (const hop of [1, 2]) {
+      const n = NW_TOWNS[(t.element + hop) % 5];
+      ctx.beginPath(); ctx.moveTo(X(t.x), Z(t.z)); ctx.lineTo(X(n.x), Z(n.z)); ctx.stroke();
+    }
+    const ox = NW.x + (t.x - NW.x) / NW.ring * 235, oz = NW.z + (t.z - NW.z) / NW.ring * 235;
+    ctx.beginPath(); ctx.moveTo(X(t.x), Z(t.z)); ctx.lineTo(X(ox), Z(oz)); ctx.stroke();
   }
   ctx.fillStyle = '#f6d8ec';
   ctx.beginPath(); ctx.arc(X(NW.x), Z(NW.z), Math.max(5, 20 * scale), 0, Math.PI * 2); ctx.fill();
