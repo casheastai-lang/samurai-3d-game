@@ -18,6 +18,14 @@ export const REGIONS = [
   { name: 'Ashen Wastes', danger: 4 },
 ];
 
+// Lakes sit away from the road. The water surface is at WATER_Y.
+export const WATER_Y = -0.45;
+export const LAKES = [
+  { x: -62, z: -45, r: 18 },
+  { x: 128, z: -245, r: 24 },
+  { x: -215, z: -560, r: 26 },
+];
+
 // One ninja base per region. Each guards a sealed portal to a demon fortress.
 export const NINJA_R = 24;
 export const NINJA_BASES = [

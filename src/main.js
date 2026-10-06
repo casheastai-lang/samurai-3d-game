@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   PATH, TOWN_IDX, TOWN_R, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
@@ -11,7 +12,7 @@ import {
 import { makeHumanoid, makeEnemyModel, makeShuriken } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -26,25 +27,57 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.0;
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xc9e2f2, 70, 260);
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 3000);
-const hemi = new THREE.HemisphereLight(0xe2efff, 0x5a4a35, 1.7);
+const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x5a4a35, 0.55);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff0d2, 3.0);
+const sun = new THREE.DirectionalLight(0xffe2b8, 3.6);
 sun.castShadow = true;
-Object.assign(sun.shadow.camera, { left: -45, right: 45, top: 45, bottom: -45, near: 1, far: 220 });
-sun.shadow.bias = -0.0006;
-sun.shadow.normalBias = 0.03;
+Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, near: 1, far: 260 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 
-const composer = new EffectComposer(renderer);
+// Post-processing renders into a multisampled HDR target so edges stay smooth.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples: 4 }));
 composer.addPass(new RenderPass(scene, camera));
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.5, 0.95);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.55, 1.0);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// Final grade: a touch more saturation and contrast, warm highlights, soft vignette.
+composer.addPass(new ShaderPass({
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec3 col = c.rgb;
+      float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(vec3(l), col, 1.12);
+      col = (col - 0.5) * 1.05 + 0.5;
+      col *= mix(vec3(0.97, 0.99, 1.03), vec3(1.04, 1.0, 0.95), smoothstep(0.2, 0.8, l));
+      vec2 d = vUv - 0.5;
+      col *= 1.0 - dot(d, d) * 0.55;
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
+    }`,
+}));
+
+// Image-based lighting: the sky is rendered into an environment map, so metal, water
+// and lacquer reflect it. Rebuilt whenever the sky palette changes.
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envRT = null, envKey = '';
+scene.environmentIntensity = 0.8;
+function refreshEnvironment(key) {
+  if (key === envKey) return;
+  envKey = key;
+  const rt = pmrem.fromScene(makeEnvScene(), 0, 0.1, 200);
+  scene.environment = rt.texture;
+  if (envRT) envRT.dispose();
+  envRT = rt;
+}
 
 let gfxHigh = true;
 try { gfxHigh = localStorage.getItem('roninsroad.gfx') !== 'low'; } catch { /* default high */ }
@@ -54,7 +87,9 @@ function applyGfx() {
   composer.setPixelRatio(pr);
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
-  const ms = gfxHigh ? 2048 : 1024;
+  const grass = scene.getObjectByName('grass');
+  if (grass) grass.visible = gfxHigh;
+  const ms = gfxHigh ? 4096 : 1024;
   if (sun.shadow.mapSize.x !== ms) {
     sun.shadow.mapSize.set(ms, ms);
     if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
@@ -69,14 +104,15 @@ window.addEventListener('resize', () => {
 
 // Sky palettes for the road, the ashen north, and the demon realm.
 const PAL = {
-  day:   { top: new THREE.Color(0x4a88cc), hor: new THREE.Color(0xcfe4f0), sun: new THREE.Color(0xfff0d2), hemi: 1.7 },
-  ash:   { top: new THREE.Color(0x3a1c18), hor: new THREE.Color(0x9a5a44), sun: new THREE.Color(0xff9a6a), hemi: 1.1 },
-  realm: { top: new THREE.Color(0x120202), hor: new THREE.Color(0x6a1a0a), sun: new THREE.Color(0xff5a2a), hemi: 0.9 },
+  day:   { top: new THREE.Color(0x2f6bb8), hor: new THREE.Color(0xc4d8e6), sun: new THREE.Color(0xffe2b8), hemi: 0.55 },
+  ash:   { top: new THREE.Color(0x3a1c18), hor: new THREE.Color(0x9a5a44), sun: new THREE.Color(0xff9a6a), hemi: 0.45 },
+  realm: { top: new THREE.Color(0x120202), hor: new THREE.Color(0x6a1a0a), sun: new THREE.Color(0xff5a2a), hemi: 0.5 },
 };
 const skyTop = new THREE.Color(), skyHor = new THREE.Color(), sunCol = new THREE.Color();
 
 buildWorld(scene);
 initFx(scene, camera, height);
+applyGfx();
 
 // ============================================================ Rig animation
 function animateWalk(rig, dt, amt) {
@@ -872,7 +908,7 @@ function updateEnemies(dt, playerSafe) {
       else if (!e.role && !e.summoned && e.deadT > 75 && dist > 80) respawnEnemy(e);
       continue;
     }
-    e.rig.root.visible = dist < 170;
+    e.rig.root.visible = dist < 135;
     if (dist > 120 && e.state === 'idle') { if (e.bar) e.bar.visible = false; continue; }
     activeList.push(e);
     if (e.role && !['idle', 'return'].includes(e.state)) engaged = e;
@@ -1623,7 +1659,9 @@ function updateWorldState(dt) {
   sun.color.copy(sunCol);
   hemi.intensity = lerp(base.hemi, PAL.ash.hemi, a);
   hemi.groundColor.set(realm ? 0x8a2a10 : 0x5a4a35);
-  updateSky(camera.position, dt, skyTop, skyHor, sunCol);
+  updateSky(camera.position, dt, skyTop, skyHor, sunCol, !!realm);
+  refreshEnvironment(realm ? 'realm' : a > 0.5 ? 'ash' : 'day');
+  scene.environmentIntensity = realm ? 0.5 : lerp(0.8, 0.55, a);
   const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < -740 ? 'ash' : P.pos.z > -560 ? 'petals' : 'none';
   updateAmbient(dt, _center.set(P.pos.x, P.y, P.pos.z), mode, time);
 
@@ -1656,7 +1694,7 @@ function updateCamera(dt) {
   }
   camera.position.set(cx, cy, cz);
   camera.lookAt(tx, ty, tz);
-  sun.position.set(tx + 50, ty + 90, tz + 35);
+  sun.position.set(tx + SUN_DIR.x * 150, ty + SUN_DIR.y * 150, tz + SUN_DIR.z * 150);
   sun.target.position.set(tx, ty, tz);
 }
 
@@ -1745,6 +1783,7 @@ function frame() {
   } else if (!started) {
     camYaw += dt * 0.08;
     updateSky(camera.position, dt, PAL.day.top, PAL.day.hor, PAL.day.sun);
+    refreshEnvironment('day');
   }
   updateCamera(dt);
   updateFloaters(dt);

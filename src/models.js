@@ -1,23 +1,78 @@
-// Procedural low-poly models. Every character is a "rig": a root group with a body
-// pivot (at hip height), two legs and two arms that the game animates. Models face +Z.
+// Procedural models. Every character is a "rig": a root group with a body pivot
+// (at hip height), two legs and two arms that the game animates. Models face +Z.
 import * as THREE from 'three';
+import {
+  grainTex, clothTex, plasterTex, woodTex, roofTex, stoneTex, shojiTex, tigerTex, tiled,
+} from './textures.js';
+
+// Low-sided cones and cylinders read as faceted shapes, so give them flat normals.
+function facet(geo) {
+  const p = geo.parameters || {};
+  const lowPoly = (p.radialSegments !== undefined && p.radialSegments <= 6) || p.detail === 0;
+  if (!lowPoly) return geo;
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  g.computeVertexNormals();
+  return g;
+}
 
 function builder() {
   const mats = [];
   const M = (color, extra = {}) => {
-    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true, ...extra });
+    const m = new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...extra });
     mats.push(m);
     return m;
   };
   const add = (parent, geo, mat, x = 0, y = 0, z = 0) => {
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(facet(geo), mat);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
+    mesh.receiveShadow = true;
     parent.add(mesh);
     return mesh;
   };
   return { mats, M, add };
 }
+// Merge a group's direct child meshes that share a material into one mesh, so a detailed
+// character costs a handful of draw calls instead of dozens.
+function mergeByMaterial(group) {
+  const byMat = new Map();
+  for (const c of group.children) {
+    if (!c.isMesh) continue;
+    if (!byMat.has(c.material)) byMat.set(c.material, []);
+    byMat.get(c.material).push(c);
+  }
+  for (const [mat, list] of byMat) {
+    if (list.length < 2) continue;
+    const geos = list.map(m => {
+      m.updateMatrix();
+      const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      g.applyMatrix4(m.matrix);
+      group.remove(m);
+      return g;
+    });
+    const total = geos.reduce((n, g) => n + g.attributes.position.count, 0);
+    const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3), uv = new Float32Array(total * 2);
+    let o = 0;
+    for (const g of geos) {
+      pos.set(g.attributes.position.array, o * 3);
+      nor.set(g.attributes.normal.array, o * 3);
+      if (g.attributes.uv) uv.set(g.attributes.uv.array, o * 2);
+      o += g.attributes.position.count;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const merged = new THREE.Mesh(geo, mat);
+    merged.castShadow = true;
+    merged.receiveShadow = true;
+    group.add(merged);
+  }
+}
+function mergeRig(r) {
+  for (const g of [r.body, r.head, r.legL, r.legR, r.armL, r.armR]) mergeByMaterial(g);
+}
+const fabric = () => ({ map: clothTex(), bumpMap: grainTex(), bumpScale: 0.5, roughness: 0.92 });
 
 export function makeKatana(o = {}) {
   const { color = 0xdfe6ee, glow = 0x000000, len = 1, style = 'katana' } = o;
@@ -25,12 +80,12 @@ export function makeKatana(o = {}) {
   const handle = new THREE.MeshStandardMaterial({ color: 0x2a1a12, roughness: 0.9 });
   const gold = new THREE.MeshStandardMaterial({ color: 0xb8902f, metalness: 0.7, roughness: 0.4 });
   const steel = new THREE.MeshStandardMaterial({
-    color, metalness: 0.85, roughness: 0.22, emissive: glow, emissiveIntensity: glow ? 2.2 : 0,
+    color, metalness: 0.95, roughness: 0.12, emissive: glow, emissiveIntensity: glow ? 2.2 : 0,
   });
   const bl = 1.25 * len;
   const h = new THREE.Mesh(new THREE.BoxGeometry(0.07, style === 'nodachi' ? 0.55 : 0.34, 0.07), handle);
   h.position.y = style === 'nodachi' ? 0.12 : 0.02;
-  const tsuba = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, style === 'jagged' ? 4 : 10), gold);
+  const tsuba = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, style === 'jagged' ? 4 : 24), gold);
   tsuba.position.y = -0.17;
   const blade = new THREE.Mesh(new THREE.BoxGeometry(0.035, bl, 0.1), steel);
   blade.position.y = -0.19 - bl / 2;
@@ -73,8 +128,8 @@ function makeShortBlade() {
 
 function makeClub(scaleLen = 1) {
   const g = new THREE.Group();
-  const iron = new THREE.MeshStandardMaterial({ color: 0x3b3936, metalness: 0.5, roughness: 0.6, flatShading: true });
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.09, 1.6 * scaleLen, 7), iron);
+  const iron = new THREE.MeshStandardMaterial({ color: 0x4a4744, metalness: 0.8, roughness: 0.45, bumpMap: grainTex(), bumpScale: 2 });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.09, 1.6 * scaleLen, 16), iron);
   shaft.position.y = -0.8 * scaleLen;
   shaft.castShadow = true;
   g.add(shaft);
@@ -106,83 +161,123 @@ export function makeHumanoid(o = {}) {
   const root = new THREE.Group();
   const body = new THREE.Group(); body.position.y = 1.0; root.add(body);
 
-  const cloth = M(o.cloth ?? 0x445566), cloth2 = M(o.cloth2 ?? o.cloth ?? 0x334455);
-  const skin = M(o.skin ?? 0xe0b48a), dark = M(0x1d1a18);
+  const cloth = M(o.cloth ?? 0x445566, fabric()), cloth2 = M(o.cloth2 ?? o.cloth ?? 0x334455, fabric());
+  const skin = M(o.skin ?? 0xe0b48a, { roughness: 0.55, bumpMap: grainTex(), bumpScale: 0.15 });
+  const dark = M(0x1d1a18, { roughness: 0.7 });
+  const under = M(0xe9e2d4, fabric());
+  const hairM = M(o.hair ?? 0x14100c, { roughness: 0.5 });
 
-  add(body, new THREE.BoxGeometry(0.74, 0.85, 0.42), cloth, 0, 0.45, 0);
-  add(body, new THREE.BoxGeometry(0.78, 0.12, 0.46), dark, 0, 0.06, 0);
-  add(body, new THREE.CylinderGeometry(0.38, 0.5, 0.38, 8), cloth2, 0, -0.12, 0);
-  add(body, new THREE.BoxGeometry(0.2, 0.15, 0.2), skin, 0, 0.92, 0);
-  const head = add(body, new THREE.SphereGeometry(0.27, 10, 8), skin, 0, 1.13, 0);
-  const eyeM = new THREE.MeshBasicMaterial({ color: 0x111111 });
-  add(head, new THREE.BoxGeometry(0.06, 0.04, 0.02), eyeM, -0.09, 0.03, 0.25);
-  add(head, new THREE.BoxGeometry(0.06, 0.04, 0.02), eyeM, 0.09, 0.03, 0.25);
+  // Kimono torso, rounded shoulders, white under-collar and an obi sash.
+  add(body, new THREE.CylinderGeometry(0.34, 0.29, 0.86, 24), cloth, 0, 0.47, 0).scale.z = 0.66;
+  add(body, new THREE.SphereGeometry(0.34, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), cloth, 0, 0.89, 0).scale.set(1, 0.35, 0.66);
+  for (const sx of [-1, 1]) {
+    const c = add(body, new THREE.BoxGeometry(0.07, 0.5, 0.02), under, sx * 0.075, 0.68, 0.215);
+    c.rotation.z = sx * 0.38;
+  }
+  add(body, new THREE.CylinderGeometry(0.315, 0.315, 0.16, 24), M(o.obi ?? 0x2a1a14, fabric()), 0, 0.08, 0).scale.z = 0.72;
+  add(body, new THREE.CylinderGeometry(0.31, 0.5, 0.44, 24), cloth2, 0, -0.13, 0).scale.z = 0.8;
+  add(body, new THREE.CylinderGeometry(0.075, 0.09, 0.16, 14), skin, 0, 0.96, 0);
+
+  // Head with a face.
+  const head = new THREE.Group(); head.position.set(0, 1.16, 0); body.add(head);
+  add(head, new THREE.SphereGeometry(0.235, 32, 24), skin, 0, 0, 0).scale.set(0.92, 1.08, 1);
+  add(head, new THREE.SphereGeometry(0.15, 24, 16), skin, 0, -0.1, 0.07).scale.set(1, 0.8, 1);
+  add(head, new THREE.ConeGeometry(0.035, 0.09, 12), skin, 0, -0.02, 0.235).rotation.x = Math.PI / 2;
+  const eyeWhite = M(0xf0ece4, { roughness: 0.25 }), pupil = M(0x140c08, { roughness: 0.15 });
+  for (const sx of [-1, 1]) {
+    add(head, new THREE.SphereGeometry(0.05, 12, 10), skin, sx * 0.215, -0.01, 0).scale.set(0.45, 1, 0.8);
+    add(head, new THREE.SphereGeometry(0.03, 14, 10), eyeWhite, sx * 0.083, 0.03, 0.197).scale.z = 0.5;
+    add(head, new THREE.SphereGeometry(0.017, 12, 8), pupil, sx * 0.083, 0.03, 0.211);
+    add(head, new THREE.BoxGeometry(0.085, 0.018, 0.02), hairM, sx * 0.085, 0.085, 0.208).rotation.z = sx * -0.15;
+  }
+  const hair = () => {
+    add(head, new THREE.SphereGeometry(0.245, 28, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM, 0, 0.02, -0.02).scale.set(0.95, 1.08, 1.02);
+    add(head, new THREE.CapsuleGeometry(0.045, 0.14, 6, 10), hairM, 0, 0.26, -0.04).rotation.x = Math.PI / 2 - 0.3;
+  };
 
   if (o.armor) {
-    const arm = M(o.armor);
-    add(body, new THREE.BoxGeometry(0.8, 0.5, 0.5), arm, 0, 0.55, 0);
+    const lac = M(o.armor, { roughness: 0.32, metalness: 0.2, bumpMap: grainTex(), bumpScale: 0.3 });
+    const cord = M(0xc9a24a, { roughness: 0.6 });
+    add(body, new THREE.CylinderGeometry(0.37, 0.33, 0.52, 24), lac, 0, 0.56, 0).scale.z = 0.72;
+    for (let i = 0; i < 4; i++) add(body, new THREE.CylinderGeometry(0.372, 0.372, 0.015, 24), cord, 0, 0.36 + i * 0.13, 0).scale.z = 0.725;
     for (const sx of [-1, 1]) {
-      const pad = add(body, new THREE.BoxGeometry(0.34, 0.08, 0.42), arm, sx * 0.5, 0.86, 0);
-      pad.rotation.z = sx * -0.35;
+      const sode = add(body, new THREE.BoxGeometry(0.3, 0.34, 0.36), lac, sx * 0.5, 0.72, 0);
+      sode.rotation.z = sx * 0.28;
     }
-    for (let i = 0; i < 3; i++) add(body, new THREE.BoxGeometry(0.82 + i * 0.04, 0.1, 0.5), arm, 0, -0.05 - i * 0.12, 0);
+    for (let k = 0; k < 4; k++) {
+      const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+      const plate = add(body, new THREE.BoxGeometry(0.32, 0.36, 0.04), lac, Math.sin(a) * 0.36, -0.12, Math.cos(a) * 0.3);
+      plate.rotation.y = a; plate.rotation.x = 0.18;
+    }
   }
   if (o.hat === 'kasa') {
-    const straw = M(0xc9a86a);
-    add(body, new THREE.ConeGeometry(0.62, 0.32, 14), straw, 0, 1.42, 0);
+    hair();
+    const straw = M(0xc9a86a, { roughness: 0.95, bumpMap: grainTex(), bumpScale: 1.5 });
+    add(body, new THREE.ConeGeometry(0.64, 0.3, 40), straw, 0, 1.43, 0);
+    add(body, new THREE.TorusGeometry(0.62, 0.015, 6, 40), dark, 0, 1.29, 0).rotation.x = Math.PI / 2;
   } else if (o.hat === 'band') {
-    add(head, new THREE.CylinderGeometry(0.28, 0.28, 0.08, 10), M(o.bandColor ?? 0x7a1b1b), 0, 0.1, 0);
-    add(head, new THREE.SphereGeometry(0.2, 8, 6), dark, 0, 0.18, -0.08);
+    hair();
+    add(head, new THREE.TorusGeometry(0.235, 0.03, 8, 28), M(o.bandColor ?? 0x7a1b1b, fabric()), 0, 0.1, 0).rotation.x = Math.PI / 2;
   } else if (o.hat === 'bun') {
-    add(head, new THREE.SphereGeometry(0.11, 8, 6), M(o.hair ?? 0x1a1410), 0, 0.27, -0.06);
-    add(head, new THREE.SphereGeometry(0.26, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), M(o.hair ?? 0x1a1410), 0, 0.03, -0.02);
+    hair();
+    add(head, new THREE.SphereGeometry(0.1, 14, 10), hairM, 0, 0.2, -0.16);
   } else if (o.hat === 'kabuto') {
-    const helm = M(o.armor ?? 0x2a2420, { metalness: 0.4, roughness: 0.5 });
-    const gold = M(0xd4a72c, { metalness: 0.8, roughness: 0.3 });
-    add(head, new THREE.SphereGeometry(0.31, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), helm, 0, 0.02, 0);
-    const neck = add(head, new THREE.CylinderGeometry(0.33, 0.48, 0.25, 10, 1, true), helm, 0, -0.08, -0.04);
-    neck.material.side = THREE.DoubleSide;
+    const helm = M(o.armor ?? 0x2a2420, { metalness: 0.45, roughness: 0.35 });
+    const gold = M(0xd4a72c, { metalness: 0.9, roughness: 0.25 });
+    add(head, new THREE.SphereGeometry(0.29, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2), helm, 0, 0.04, 0);
+    for (let i = 0; i < 3; i++) {
+      const ring = add(head, new THREE.CylinderGeometry(0.31 + i * 0.05, 0.35 + i * 0.05, 0.08, 28, 1, true), helm, 0, -0.02 - i * 0.07, -0.05);
+      ring.material.side = THREE.DoubleSide;
+    }
     for (const sx of [-1, 1]) {
-      const horn = add(head, new THREE.BoxGeometry(0.05, 0.42, 0.03), gold, sx * 0.13, 0.4, 0.2);
+      const horn = add(head, new THREE.BoxGeometry(0.04, 0.44, 0.02), gold, sx * 0.14, 0.42, 0.2);
       horn.rotation.z = sx * -0.45;
     }
-    add(head, new THREE.SphereGeometry(0.05, 6, 4), gold, 0, 0.2, 0.28);
+    add(head, new THREE.SphereGeometry(0.05, 12, 8), gold, 0, 0.2, 0.27);
   } else if (o.hat === 'ninja') {
-    const hood = M(o.cloth ?? 0x1b1b21);
-    add(head, new THREE.SphereGeometry(0.295, 10, 8), hood, 0, 0.0, -0.01);
-    add(head, new THREE.BoxGeometry(0.4, 0.07, 0.05), M(0xc99a72), 0, 0.03, 0.26);
-    const tail = add(head, new THREE.BoxGeometry(0.06, 0.35, 0.03), M(o.scarf ?? 0x8a1010), 0.08, 0.0, -0.3);
-    tail.rotation.x = 0.4;
+    const hood = M(o.cloth ?? 0x1b1b21, fabric());
+    add(head, new THREE.SphereGeometry(0.255, 28, 20), hood, 0, 0.0, -0.01).scale.set(0.95, 1.1, 1.02);
+    add(head, new THREE.CylinderGeometry(0.2, 0.17, 0.2, 20), hood, 0, -0.14, 0.03);
+    const tail = add(head, new THREE.BoxGeometry(0.06, 0.38, 0.02), M(o.scarf ?? 0x8a1010, fabric()), 0.08, 0.0, -0.28);
+    tail.rotation.x = 0.45;
   } else if (o.hat === 'onimask') {
-    const red = M(0xb0201a), bone = M(0xeee3c8), hair = M(0xe8e8e8);
-    add(head, new THREE.BoxGeometry(0.42, 0.42, 0.08), red, 0, 0, 0.25);
+    hair();
+    const red = M(0xb0201a, { roughness: 0.3, metalness: 0.1 }), bone = M(0xeee3c8, { roughness: 0.4 });
+    add(head, new THREE.SphereGeometry(0.22, 24, 16, -Math.PI / 2, Math.PI, 0, Math.PI), red, 0, -0.01, 0.06).scale.set(1, 1.08, 0.9);
     for (const sx of [-1, 1]) {
-      const horn = add(head, new THREE.ConeGeometry(0.05, 0.3, 5), bone, sx * 0.16, 0.32, 0.18);
-      horn.rotation.z = sx * -0.3;
-      add(head, new THREE.BoxGeometry(0.09, 0.04, 0.02), new THREE.MeshBasicMaterial({ color: 0xffd23a }), sx * 0.1, 0.05, 0.3);
+      const horn = add(head, new THREE.ConeGeometry(0.045, 0.32, 12), bone, sx * 0.15, 0.3, 0.12);
+      horn.rotation.z = sx * -0.35;
+      add(head, new THREE.SphereGeometry(0.03, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffd23a }), sx * 0.083, 0.03, 0.25);
     }
-    add(head, new THREE.SphereGeometry(0.3, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), hair, 0, 0.05, -0.05);
+    add(head, new THREE.SphereGeometry(0.28, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), M(0xe8e8e8, { roughness: 0.9 }), 0, 0.06, -0.06);
   } else if (o.hat === 'elder') {
-    add(head, new THREE.SphereGeometry(0.27, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), M(0xdddddd), 0, 0.04, -0.03);
-    add(head, new THREE.ConeGeometry(0.12, 0.35, 6), M(0xe8e8e8), 0, -0.3, 0.2).rotation.x = Math.PI;
-  }
+    const white = M(0xdddddd, { roughness: 0.9 });
+    add(head, new THREE.SphereGeometry(0.245, 24, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), white, 0, 0.02, -0.03);
+    add(head, new THREE.ConeGeometry(0.1, 0.32, 12), white, 0, -0.28, 0.18).rotation.x = Math.PI;
+  } else hair();
   if (o.scarf) {
-    const s = add(body, new THREE.BoxGeometry(0.18, 0.6, 0.04), M(o.scarf), 0.15, 0.6, -0.24);
+    const s = add(body, new THREE.BoxGeometry(0.16, 0.62, 0.02), M(o.scarf, fabric()), 0.15, 0.6, -0.24);
     s.rotation.x = 0.25;
   }
 
+  // Hakama legs with white tabi socks and sandals.
+  const tabi = M(0xe8e4dc, fabric());
   const legL = new THREE.Group(); legL.position.set(-0.19, -0.15, 0); body.add(legL);
   const legR = new THREE.Group(); legR.position.set(0.19, -0.15, 0); body.add(legR);
   for (const leg of [legL, legR]) {
-    add(leg, new THREE.BoxGeometry(0.27, 0.78, 0.3), cloth2, 0, -0.39, 0);
-    add(leg, new THREE.BoxGeometry(0.25, 0.1, 0.38), dark, 0, -0.8, 0.04);
+    add(leg, new THREE.CylinderGeometry(0.17, 0.23, 0.74, 18), cloth2, 0, -0.37, 0);
+    add(leg, new THREE.CapsuleGeometry(0.075, 0.14, 6, 12), tabi, 0, -0.8, 0.05).rotation.x = Math.PI / 2;
+    add(leg, new THREE.BoxGeometry(0.15, 0.03, 0.32), dark, 0, -0.865, 0.05);
   }
-  const armL = new THREE.Group(); armL.position.set(-0.48, 0.8, 0); body.add(armL);
-  const armR = new THREE.Group(); armR.position.set(0.48, 0.8, 0); body.add(armR);
+  // Wide kimono sleeves, forearms and hands.
+  const armL = new THREE.Group(); armL.position.set(-0.46, 0.82, 0); body.add(armL);
+  const armR = new THREE.Group(); armR.position.set(0.46, 0.82, 0); body.add(armR);
   armR.rotation.order = 'YXZ';
   for (const arm of [armL, armR]) {
-    add(arm, new THREE.BoxGeometry(0.2, 0.62, 0.22), cloth, 0, -0.3, 0);
-    add(arm, new THREE.SphereGeometry(0.09, 6, 5), skin, 0, -0.66, 0);
+    add(arm, new THREE.SphereGeometry(0.13, 16, 12), cloth, 0, 0, 0);
+    add(arm, new THREE.CylinderGeometry(0.12, 0.2, 0.5, 18), cloth, 0, -0.26, 0);
+    add(arm, new THREE.CylinderGeometry(0.055, 0.048, 0.2, 12), skin, 0, -0.56, 0);
+    add(arm, new THREE.SphereGeometry(0.068, 14, 10), skin, 0, -0.68, 0).scale.set(0.9, 1.1, 1.1);
   }
 
   const weapon = new THREE.Group(); weapon.position.y = -0.68; armR.add(weapon);
@@ -191,71 +286,81 @@ export function makeHumanoid(o = {}) {
   else if (o.weapon === 'staff') weapon.add(makeStaff());
 
   root.scale.setScalar(o.scale ?? 1);
-  return { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  mergeRig(rig);
+  return rig;
 }
 
-// Oni / demon king.
+// Oni / demon king: heavy, muscular, with a tiger-skin loincloth and an iron kanabo.
 export function makeOni(o = {}) {
   const { mats, M, add } = builder();
   const root = new THREE.Group();
   const body = new THREE.Group(); body.position.y = 1.0; root.add(body);
 
-  const skin = M(o.skin ?? 0xb83a2a);
-  const hair = M(o.hair ?? 0x1b1311);
-  const tiger = M(0xd9a520);
-  const bone = M(o.horn ?? 0xeee3c8);
+  const skin = M(o.skin ?? 0xb83a2a, { roughness: 0.6, bumpMap: grainTex(), bumpScale: 1.2 });
+  const hair = M(o.hair ?? 0x1b1311, { roughness: 0.75 });
+  const tiger = M(0xffffff, { map: tigerTex(), roughness: 0.85, bumpMap: grainTex(), bumpScale: 0.8 });
+  const bone = M(o.horn ?? 0xeee3c8, { roughness: 0.35 });
+  const gold = M(0xb8902f, { metalness: 0.85, roughness: 0.3 });
 
-  add(body, new THREE.BoxGeometry(1.15, 1.0, 0.72), skin, 0, 0.55, 0);
-  add(body, new THREE.SphereGeometry(0.46, 10, 8), skin, 0, 0.3, 0.12).scale.set(1, 0.9, 0.8);
-  add(body, new THREE.BoxGeometry(1.1, 0.42, 0.82), tiger, 0, -0.05, 0);
-  const stripe = M(0x221a10);
-  for (let i = -2; i <= 2; i++) add(body, new THREE.BoxGeometry(0.06, 0.44, 0.84), stripe, i * 0.22, -0.05, 0);
+  add(body, new THREE.SphereGeometry(0.62, 32, 24), skin, 0, 0.62, 0).scale.set(1, 0.95, 0.68);
+  for (const sx of [-1, 1]) add(body, new THREE.SphereGeometry(0.3, 24, 16), skin, sx * 0.23, 0.8, 0.22).scale.set(1, 0.75, 0.55);
+  add(body, new THREE.SphereGeometry(0.44, 28, 20), skin, 0, 0.28, 0.14).scale.set(1, 0.9, 0.85);
+  add(body, new THREE.CylinderGeometry(0.56, 0.64, 0.44, 32), tiger, 0, -0.05, 0).scale.z = 0.8;
+  add(body, new THREE.TorusGeometry(0.57, 0.05, 10, 32), M(0x3a2618, fabric()), 0, 0.17, 0).rotation.x = Math.PI / 2;
+  add(body, new THREE.CylinderGeometry(0.24, 0.32, 0.3, 20), skin, 0, 1.12, 0.02);
 
-  const head = new THREE.Group(); head.position.set(0, 1.35, 0.05); body.add(head);
-  add(head, new THREE.BoxGeometry(0.62, 0.58, 0.56), skin, 0, 0, 0);
-  add(head, new THREE.BoxGeometry(0.68, 0.32, 0.5), hair, 0, 0.26, -0.1);
-  add(head, new THREE.BoxGeometry(0.66, 0.5, 0.2), hair, 0, -0.05, -0.28);
+  const head = new THREE.Group(); head.position.set(0, 1.36, 0.08); body.add(head);
+  add(head, new THREE.SphereGeometry(0.32, 32, 24), skin, 0, 0.02, 0).scale.set(1, 1.04, 0.95);
+  add(head, new THREE.SphereGeometry(0.25, 28, 18), skin, 0, -0.15, 0.08).scale.set(1.15, 0.75, 1);
+  add(head, new THREE.CapsuleGeometry(0.06, 0.4, 6, 12), skin, 0, 0.11, 0.25).rotation.z = Math.PI / 2;
+  add(head, new THREE.SphereGeometry(0.075, 14, 10), skin, 0, -0.01, 0.31).scale.set(1.2, 0.9, 1);
+  add(head, new THREE.BoxGeometry(0.3, 0.05, 0.05), M(0x200808, { roughness: 0.4 }), 0, -0.19, 0.29);
   const eyeM = new THREE.MeshBasicMaterial({ color: o.eyes ?? 0xffe14a });
-  add(head, new THREE.BoxGeometry(0.13, 0.07, 0.02), eyeM, -0.14, 0.06, 0.285);
-  add(head, new THREE.BoxGeometry(0.13, 0.07, 0.02), eyeM, 0.14, 0.06, 0.285);
-  const brow = add(head, new THREE.BoxGeometry(0.5, 0.07, 0.05), hair, 0, 0.14, 0.29);
-  brow.rotation.x = 0.2;
-  const fangM = M(0xffffff);
   for (const sx of [-1, 1]) {
-    const f = add(head, new THREE.ConeGeometry(0.04, 0.13, 4), fangM, sx * 0.17, -0.17, 0.27);
+    add(head, new THREE.SphereGeometry(0.05, 14, 10), eyeM, sx * 0.13, 0.04, 0.27).scale.set(1.3, 0.8, 0.6);
+    const f = add(head, new THREE.ConeGeometry(0.035, 0.13, 10), bone, sx * 0.12, -0.13, 0.3);
     f.rotation.x = Math.PI * 0.95;
-    const horn = add(head, new THREE.ConeGeometry(0.08, 0.42, 6), bone, sx * 0.21, 0.5, 0);
-    horn.rotation.z = sx * -0.35;
+    const horn = add(head, new THREE.ConeGeometry(0.075, 0.48, 16, 4), bone, sx * 0.2, 0.42, -0.02);
+    horn.rotation.z = sx * -0.4;
   }
-  if (o.single) { add(head, new THREE.ConeGeometry(0.1, 0.55, 6), bone, 0, 0.55, 0.05); }
+  if (o.single) add(head, new THREE.ConeGeometry(0.09, 0.6, 16, 4), bone, 0, 0.52, 0.04);
+  // Wild mane of spiky hair.
+  for (let i = 0; i < 11; i++) {
+    const a = (i / 10 - 0.5) * 2.6;
+    const spike = add(head, new THREE.ConeGeometry(0.09, 0.42, 10), hair, Math.sin(a) * 0.26, 0.12 + Math.cos(a) * 0.08, -0.2 - Math.cos(a) * 0.06);
+    spike.rotation.x = -1.9; spike.rotation.z = -a * 0.5;
+  }
 
   const legL = new THREE.Group(); legL.position.set(-0.3, -0.18, 0); body.add(legL);
   const legR = new THREE.Group(); legR.position.set(0.3, -0.18, 0); body.add(legR);
   for (const leg of [legL, legR]) {
-    add(leg, new THREE.BoxGeometry(0.38, 0.74, 0.42), skin, 0, -0.37, 0);
-    add(leg, new THREE.BoxGeometry(0.4, 0.1, 0.5), hair, 0, -0.77, 0.05);
+    add(leg, new THREE.CapsuleGeometry(0.2, 0.32, 8, 16), skin, 0, -0.25, 0);
+    add(leg, new THREE.CapsuleGeometry(0.16, 0.28, 8, 16), skin, 0, -0.56, 0.02);
+    add(leg, new THREE.CylinderGeometry(0.18, 0.18, 0.08, 18), gold, 0, -0.66, 0.02);
+    add(leg, new THREE.SphereGeometry(0.17, 18, 12), skin, 0, -0.78, 0.1).scale.set(1, 0.45, 1.5);
   }
   const armL = new THREE.Group(); armL.position.set(-0.74, 0.92, 0); body.add(armL);
   const armR = new THREE.Group(); armR.position.set(0.74, 0.92, 0); body.add(armR);
   armR.rotation.order = 'YXZ';
   for (const arm of [armL, armR]) {
-    add(arm, new THREE.BoxGeometry(0.32, 0.78, 0.34), skin, 0, -0.36, 0);
-    add(arm, new THREE.BoxGeometry(0.34, 0.12, 0.36), M(0xb8902f, { metalness: 0.6 }), 0, -0.62, 0);
-    add(arm, new THREE.SphereGeometry(0.16, 7, 6), skin, 0, -0.8, 0);
+    add(arm, new THREE.SphereGeometry(0.25, 22, 16), skin, 0, 0, 0);
+    add(arm, new THREE.CapsuleGeometry(0.16, 0.34, 8, 16), skin, 0, -0.3, 0);
+    add(arm, new THREE.CylinderGeometry(0.16, 0.15, 0.16, 20), gold, 0, -0.6, 0);
+    add(arm, new THREE.SphereGeometry(0.17, 18, 14), skin, 0, -0.8, 0);
   }
   const weapon = new THREE.Group(); weapon.position.y = -0.82; armR.add(weapon);
   weapon.add(makeClub(o.clubLen ?? 1));
 
   if (o.cape) {
-    const cape = add(body, new THREE.BoxGeometry(1.2, 1.5, 0.06), M(o.cape), 0, 0.2, -0.42);
-    cape.rotation.x = 0.12;
-  }
-  if (o.glow) {
-    for (const m of mats) { m.emissive = new THREE.Color(o.glow); m.emissiveIntensity = 0.0; }
+    const cape = add(body, new THREE.CylinderGeometry(0.62, 0.9, 1.5, 24, 1, true, Math.PI * 0.6, Math.PI * 0.8), M(o.cape, { ...fabric(), side: THREE.DoubleSide }), 0, 0.3, -0.05);
+    cape.rotation.y = Math.PI;
   }
 
   root.scale.setScalar(o.scale ?? 1);
-  return { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0 };
+  mergeRig(rig);
+  return rig;
 }
 
 export function makeEnemyModel(type, scale) {
@@ -274,14 +379,26 @@ export function makeEnemyModel(type, scale) {
 
 // ---------- Scenery ----------
 const sharedMats = new Map();
+const keyOf = extra => Object.entries(extra).map(([k, v]) => k + '=' + (v && v.isTexture ? v.uuid : v)).join(',');
 export function smat(color, extra = {}) {
-  const key = color + JSON.stringify(extra);
-  if (!sharedMats.has(key)) sharedMats.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.9, flatShading: true, ...extra }));
+  const key = color + keyOf(extra);
+  if (!sharedMats.has(key)) sharedMats.set(key, new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...extra }));
   return sharedMats.get(key);
+}
+// Textured scenery material, cached by texture name, tint and tiling.
+const texMats = new Map();
+const TEX = { plaster: plasterTex, wood: woodTex, roof: roofTex, stone: stoneTex, shoji: shojiTex, grain: grainTex };
+export function tmat(name, color = 0xffffff, rx = 1, ry = 1, extra = {}) {
+  const key = [name, color, rx, ry, keyOf(extra)].join('|');
+  if (!texMats.has(key)) {
+    const map = tiled(TEX[name](), rx, ry);
+    texMats.set(key, new THREE.MeshStandardMaterial({ color, map, bumpMap: map, bumpScale: name === 'roof' ? 3 : 1.2, roughness: 0.85, ...extra }));
+  }
+  return texMats.get(key);
 }
 
 function mesh(geo, mat, x, y, z, parent, shadow = true) {
-  const m = new THREE.Mesh(geo, mat);
+  const m = new THREE.Mesh(facet(geo), mat);
   m.position.set(x, y, z);
   m.castShadow = shadow;
   m.receiveShadow = true;
@@ -289,32 +406,54 @@ function mesh(geo, mat, x, y, z, parent, shadow = true) {
   return m;
 }
 
+// A gabled roof of kawara tiles over a w x d footprint, eaves at height y.
+function gableRoof(g, w, d, y, color, overhang = 0.75, pitch = 0.52) {
+  const run = d / 2 + overhang, rise = run * Math.tan(pitch), len = run / Math.cos(pitch);
+  const tile = tmat('roof', color, Math.round(w * 0.9), Math.round(len * 0.9));
+  for (const sz of [-1, 1]) {
+    const slab = mesh(new THREE.BoxGeometry(w + overhang * 2, 0.16, len), tile, 0, y + rise / 2 + 0.08, sz * run / 2, g);
+    slab.rotation.x = sz * pitch;
+  }
+  const ridge = mesh(new THREE.CylinderGeometry(0.16, 0.16, w + overhang * 2 + 0.2, 16), smat(new THREE.Color(color).multiplyScalar(0.55).getHex(), { roughness: 0.6 }), 0, y + rise + 0.12, 0, g);
+  ridge.rotation.z = Math.PI / 2;
+  for (const sx of [-1, 1]) mesh(new THREE.BoxGeometry(0.2, 0.34, 0.34), smat(0x2a2a2e, { roughness: 0.5 }), sx * (w / 2 + overhang + 0.1), y + rise + 0.2, 0, g);
+  // Plaster gable ends.
+  const tri = new THREE.Shape([new THREE.Vector2(-d / 2, 0), new THREE.Vector2(d / 2, 0), new THREE.Vector2(0, (d / 2) * Math.tan(pitch))]);
+  for (const sx of [-1, 1]) {
+    const gable = mesh(new THREE.ShapeGeometry(tri), tmat('plaster', 0xf0e8d8, 1, 0.5, { side: THREE.DoubleSide }), sx * (w / 2), y, 0, g, false);
+    gable.rotation.y = Math.PI / 2;
+  }
+}
+
 export function makeHouse(wall, roof, w = 5, d = 4) {
   const g = new THREE.Group();
-  const wood = smat(0x3a2618);
-  mesh(new THREE.BoxGeometry(w + 0.6, 0.4, d + 0.6), wood, 0, 0.2, 0, g);
-  mesh(new THREE.BoxGeometry(w, 2.4, d), smat(wall), 0, 1.6, 0, g);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    mesh(new THREE.BoxGeometry(0.22, 2.5, 0.22), wood, sx * w / 2, 1.6, sz * d / 2, g);
+  const wood = tmat('wood', 0x9a7a5a, 1, 2), beam = tmat('wood', 0x7a5a40, 4, 1);
+  mesh(new THREE.BoxGeometry(w + 0.9, 0.5, d + 0.9), tmat('stone', 0xb0aca4, w / 2, 0.4), 0, 0.25, 0, g);
+  mesh(new THREE.BoxGeometry(w + 0.6, 0.1, d + 0.6), tmat('wood', 0x8a6a4a, 3, 3), 0, 0.55, 0, g);
+  mesh(new THREE.BoxGeometry(w, 2.35, d), tmat('plaster', wall, w / 3, 1), 0, 1.78, 0, g);
+  for (const sx of [-1, 0, 1]) for (const sz of [-1, 1]) {
+    mesh(new THREE.BoxGeometry(0.2, 2.45, 0.2), wood, sx * w / 2, 1.78, sz * d / 2, g);
   }
-  mesh(new THREE.BoxGeometry(w + 0.05, 0.18, d + 0.05), wood, 0, 2.75, 0, g);
-  mesh(new THREE.BoxGeometry(w + 0.05, 0.14, d + 0.05), wood, 0, 1.3, 0, g);
-  // door + windows on the front (+z)
-  mesh(new THREE.BoxGeometry(1.1, 1.8, 0.05), wood, 0, 1.3, d / 2 + 0.01, g, false);
-  for (const sx of [-1, 1]) mesh(new THREE.BoxGeometry(0.9, 0.6, 0.05), smat(0xf6efd8, { emissive: 0x6a4a1a, emissiveIntensity: 0.25 }), sx * w * 0.3, 1.95, d / 2 + 0.01, g, false);
-  const r = mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.88, 1.9, 4), smat(roof), 0, 3.8, 0, g);
-  r.rotation.y = Math.PI / 4;
-  r.scale.set(w / Math.max(w, d) * 1.05, 1, d / Math.max(w, d) * 1.05);
-  mesh(new THREE.BoxGeometry(0.25, 0.25, d * 0.9), smat(roof), 0, 4.75, 0, g);
+  for (const sx of [-1, 1]) mesh(new THREE.BoxGeometry(0.2, 2.45, 0.2), wood, sx * w / 2, 1.78, 0, g);
+  for (const y of [0.7, 1.55, 2.95]) mesh(new THREE.BoxGeometry(w + 0.08, 0.13, d + 0.08), beam, 0, y, 0, g);
+  // Sliding shoji doors on the front, windows on the sides.
+  mesh(new THREE.BoxGeometry(1.5, 1.75, 0.05), tmat('shoji', 0xfff6e8, 1.5, 1.75, { emissive: 0x5a3a10, emissiveIntensity: 0.15 }), 0, 1.5, d / 2 + 0.03, g, false);
+  for (const sx of [-1, 1]) {
+    mesh(new THREE.BoxGeometry(0.9, 0.7, 0.05), tmat('shoji', 0xfff6e8, 1, 0.75, { emissive: 0x5a3a10, emissiveIntensity: 0.15 }), sx * w * 0.32, 1.95, d / 2 + 0.03, g, false);
+    const side = mesh(new THREE.BoxGeometry(0.9, 0.7, 0.05), tmat('shoji', 0xfff6e8, 1, 0.75), sx * (w / 2 + 0.03), 1.95, 0, g, false);
+    side.rotation.y = Math.PI / 2;
+  }
+  const roofTint = new THREE.Color(roof).lerp(new THREE.Color(0xffffff), 0.45).getHex();
+  gableRoof(g, w, d, 2.98, roofTint);
   return g;
 }
 
 export function makeTorii(scale = 1, color = 0xc0392b) {
   const g = new THREE.Group();
-  const red = smat(color), black = smat(0x1a1514);
+  const red = smat(color, { roughness: 0.45, bumpMap: grainTex(), bumpScale: 0.4 }), black = smat(0x1a1514, { roughness: 0.4 });
   for (const sx of [-1, 1]) {
-    mesh(new THREE.CylinderGeometry(0.22, 0.26, 4.4, 10), red, sx * 2.6, 2.2, 0, g);
-    mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.4, 10), black, sx * 2.6, 0.2, 0, g);
+    mesh(new THREE.CylinderGeometry(0.22, 0.26, 4.4, 24), red, sx * 2.6, 2.2, 0, g);
+    mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.4, 24), black, sx * 2.6, 0.2, 0, g);
   }
   mesh(new THREE.BoxGeometry(7.2, 0.35, 0.5), black, 0, 4.55, 0, g);
   mesh(new THREE.BoxGeometry(6.6, 0.28, 0.42), red, 0, 4.25, 0, g);
@@ -326,7 +465,7 @@ export function makeTorii(scale = 1, color = 0xc0392b) {
 
 export function makeStoneLantern(lit = true) {
   const g = new THREE.Group();
-  const stone = smat(0x8a8780);
+  const stone = tmat('stone', 0xc8c4bc, 0.5, 0.5);
   mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.3, 6), stone, 0, 0.15, 0, g);
   mesh(new THREE.CylinderGeometry(0.15, 0.2, 1.0, 6), stone, 0, 0.8, 0, g);
   mesh(new THREE.BoxGeometry(0.6, 0.5, 0.6), lit ? smat(0xffc46a, { emissive: 0xff9a2a, emissiveIntensity: 1.2 }) : stone, 0, 1.55, 0, g);
@@ -336,11 +475,11 @@ export function makeStoneLantern(lit = true) {
 
 export function makeShopStall(clothColor = 0x24467a) {
   const g = new THREE.Group();
-  const wood = smat(0x5b3b22), dark = smat(0x2e1d12);
+  const wood = tmat('wood', 0xa07850, 2, 1), dark = tmat('wood', 0x5a3a24, 1, 2);
   mesh(new THREE.BoxGeometry(4.2, 1.1, 1.2), wood, 0, 0.55, 0.8, g);
   mesh(new THREE.BoxGeometry(4.4, 0.1, 1.4), dark, 0, 1.15, 0.8, g);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) mesh(new THREE.BoxGeometry(0.18, 3.0, 0.18), dark, sx * 2.1, 1.5, sz * 1.3 + 0.2, g);
-  const roof = mesh(new THREE.BoxGeometry(5.0, 0.18, 3.6), smat(0x6e2a1e), 0, 3.15, 0.2, g);
+  const roof = mesh(new THREE.BoxGeometry(5.0, 0.18, 3.6), tmat('roof', 0xc06a5a, 4, 3), 0, 3.15, 0.2, g);
   roof.rotation.x = -0.18;
   for (let i = -1; i <= 1; i++) mesh(new THREE.BoxGeometry(1.3, 0.8, 0.04), smat(clothColor), i * 1.4, 2.6, 1.55, g, false);
   // goods on the counter
@@ -354,7 +493,7 @@ export function makeShopStall(clothColor = 0x24467a) {
 
 export function makeShrine() {
   const g = new THREE.Group();
-  const stone = smat(0x8a8780), wood = smat(0x3a2618), red = smat(0xb0301f);
+  const stone = tmat('stone', 0xc8c4bc, 1.5, 0.4), wood = tmat('wood', 0x8a6040, 1, 1), red = smat(0xb0301f);
   mesh(new THREE.BoxGeometry(3.4, 0.5, 3.0), stone, 0, 0.25, 0, g);
   mesh(new THREE.BoxGeometry(2.2, 1.8, 1.8), wood, 0, 1.4, -0.2, g);
   mesh(new THREE.BoxGeometry(1.0, 1.2, 0.05), smat(0xffe6a8, { emissive: 0xffb84a, emissiveIntensity: 0.9 }), 0, 1.2, 0.71, g, false);

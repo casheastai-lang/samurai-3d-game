@@ -31,7 +31,7 @@ so no install or internet connection is needed.
 | E | Talk, trade, pray at shrines, open chests |
 | 1 / 2 | Drink a healing potion / elixir |
 | I | Inventory: swap swords and outfits |
-| M / H / G | World map / help / graphics quality (glow on or off) |
+| M / H / G | World map / help / graphics quality (High: glow, grass, sharp shadows; Fast: for weaker computers) |
 
 ## The journey
 
@@ -65,7 +65,8 @@ Progress is saved in the browser's localStorage.
 - `index.html`, `style.css`: page and HUD
 - `src/data.js`: road, towns, bases, enemies, swords, outfits and shop items
 - `src/models.js`: procedural low-poly characters, swords, buildings, portals
-- `src/world.js`: terrain, sky, grass, towns, ninja bases, demon fortresses
+- `src/world.js`: terrain, lakes, sky, grass and trees with wind, towns, ninja bases, demon fortresses
+- `src/textures.js`: procedural textures (plaster, wood, roof tiles, stone, shoji, fabric, bark, water ripples)
 - `src/fx.js`: particles, sword trails, lightning, ambient petals and embers
 - `src/main.js`: player, combat, enemy AI, shurikens, portals, shops, inventory, UI
 - `vendor/`: Three.js and its bloom post-processing add-ons
