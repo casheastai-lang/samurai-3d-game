@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import {
   grainTex, clothTex, plasterTex, woodTex, roofTex, stoneTex, shojiTex, tigerTex, tiled,
+  tatamiTex, scrollTex,
 } from './textures.js';
 
 // Low-sided cones and cylinders read as faceted shapes, so give them flat normals.
@@ -1064,4 +1065,118 @@ export function makeArchBridge(len = 10, width = 2.6) {
     }
   }
   return g;
+}
+
+// ---------- House interiors ----------
+// A furnished room you can walk around in. Rooms are 12 x 9 m with the door in the
+// middle of the +z wall. Returns the group, local collider circles and key spots.
+export const ROOM_W = 12, ROOM_D = 9, ROOM_H = 3.2;
+export function makeRoom(kind, ch = '道') {
+  const g = new THREE.Group(), cols = [], W = ROOM_W, D = ROOM_D, H = ROOM_H;
+  const wood = tmat('wood', 0x8a6a4a, 3, 3), dark = tmat('wood', 0x5a4030, 2, 1), plaster = tmat('plaster', 0xe8dcc4, 3, 1);
+  const flat = (geo, mat, x, y, z) => { const m = mesh(geo, mat, x, y, z, g, false); return m; };
+  // Floor: wooden boards with tatami in the middle.
+  flat(new THREE.BoxGeometry(W, 0.2, D), wood, 0, -0.1, 0);
+  const tat = new THREE.MeshStandardMaterial({ map: tiled(tatamiTex(), 3, 2), roughness: 0.9 });
+  flat(new THREE.PlaneGeometry(W - 2, D - 2.4).rotateX(-Math.PI / 2), tat, 0, 0.02, -0.3);
+  // Walls (plaster between dark posts), with a door gap in the front wall.
+  const wall = (w, x, z, ry) => { const m = flat(new THREE.BoxGeometry(w, H, 0.2), plaster, x, H / 2, z); m.rotation.y = ry; };
+  wall(W, 0, -D / 2, 0);
+  wall(D, -W / 2, 0, Math.PI / 2);
+  wall(D, W / 2, 0, Math.PI / 2);
+  wall(W / 2 - 0.9, -(W / 4 + 0.45), D / 2, 0);
+  wall(W / 2 - 0.9, W / 4 + 0.45, D / 2, 0);
+  flat(new THREE.BoxGeometry(1.8, H - 2.2, 0.2), plaster, 0, 2.2 + (H - 2.2) / 2, D / 2);
+  for (let x = -W / 2; x <= W / 2 + 0.01; x += 2) for (const z of [-D / 2 + 0.12, D / 2 - 0.12]) flat(new THREE.BoxGeometry(0.2, H, 0.2), dark, x, H / 2, z);
+  for (const y of [0.15, 2.3]) {
+    flat(new THREE.BoxGeometry(W, 0.14, 0.08), dark, 0, y, -D / 2 + 0.12);
+    for (const sx of [-1, 1]) flat(new THREE.BoxGeometry(0.08, 0.14, D), dark, sx * (W / 2 - 0.12), y, 0);
+  }
+  // Glowing shoji windows on the back wall, as if the sun is outside.
+  const sho = tmat('shoji', 0xfff6e8, 2, 1, { emissive: 0xffd9a0, emissiveIntensity: 0.55 });
+  for (const x of [-3.5, 3.5]) flat(new THREE.BoxGeometry(2.6, 1.2, 0.05), sho, x, 1.6, -D / 2 + 0.13);
+  // Ceiling and beams.
+  flat(new THREE.BoxGeometry(W, 0.12, D), tmat('wood', 0x6a5038, 3, 3), 0, H, 0);
+  for (let z = -D / 2 + 1.5; z < D / 2; z += 2) flat(new THREE.BoxGeometry(W, 0.22, 0.22), dark, 0, H - 0.15, z);
+  // Wall colliders.
+  for (let x = -W / 2; x <= W / 2; x += 0.8) { cols.push([x, -D / 2 - 0.2, 0.5]); if (Math.abs(x) > 1.1) cols.push([x, D / 2 + 0.2, 0.5]); }
+  for (let z = -D / 2; z <= D / 2; z += 0.8) { cols.push([-W / 2 - 0.2, z, 0.5]); cols.push([W / 2 + 0.2, z, 0.5]); }
+
+  const lantern = (x, z) => {
+    flat(new THREE.CylinderGeometry(0.01, 0.01, 0.6, 4), dark, x, H - 0.3, z);
+    flat(new THREE.SphereGeometry(0.32, 14, 10), smat(0xffe2b0, { emissive: 0xffa040, emissiveIntensity: 1.6 }), x, H - 0.85, z);
+  };
+  const tansu = (x, z, ry) => {
+    const t = new THREE.Group();
+    mesh(new THREE.BoxGeometry(1.6, 1.4, 0.6), tmat('wood', 0x6a3a22, 1, 1), 0, 0.7, 0, t, false);
+    for (const y of [0.3, 0.7, 1.1]) for (const sx of [-0.4, 0.4]) mesh(new THREE.BoxGeometry(0.12, 0.04, 0.04), smat(0x2a2a2a, { metalness: 0.7 }), sx, y, 0.32, t, false);
+    t.position.set(x, 0, z); t.rotation.y = ry; g.add(t);
+    cols.push([x, z, 0.85]);
+  };
+  const irori = (x, z) => {
+    flat(new THREE.BoxGeometry(1.7, 0.08, 1.7), dark, x, 0.04, z);
+    flat(new THREE.BoxGeometry(1.4, 0.06, 1.4), smat(0x6a6460, { roughness: 1 }), x, 0.06, z);
+    flat(new THREE.SphereGeometry(0.35, 10, 6).scale(1, 0.35, 1), smat(0xff6a20, { emissive: 0xff4a00, emissiveIntensity: 2 }), x, 0.1, z);
+    flat(new THREE.CylinderGeometry(0.015, 0.015, H - 1.0, 4), dark, x, (H + 1.0) / 2, z);
+    flat(new THREE.SphereGeometry(0.28, 12, 9).scale(1, 0.8, 1), smat(0x1a1a1a, { metalness: 0.6, roughness: 0.4 }), x, 0.85, z);
+    cols.push([x, z, 1.05]);
+  };
+  const scroll = (x) => {
+    flat(new THREE.PlaneGeometry(0.8, 1.6), new THREE.MeshStandardMaterial({ map: scrollTex(ch), roughness: 0.9 }), x, 1.6, -D / 2 + 0.14);
+    flat(new THREE.CylinderGeometry(0.03, 0.03, 0.95, 6).rotateZ(Math.PI / 2), dark, x, 2.42, -D / 2 + 0.16);
+  };
+  const cushion = (x, z, c) => flat(new THREE.BoxGeometry(0.6, 0.1, 0.6), smat(c), x, 0.07, z);
+  const spots = { spawn: [0, D / 2 - 1.4], exit: [0, D / 2 - 0.5], stash: null, bed: null };
+
+  if (kind === 'farm') {
+    irori(0, -0.5);
+    for (const [x, z] of [[-1.2, -0.5], [1.2, -0.5], [0, -1.7]]) cushion(x, z, 0x5a3a2a);
+    tansu(-4.6, -3.9, 0); spots.stash = [-4.6, -3.1];
+    for (const x of [3.6, 4.6]) { flat(new THREE.CylinderGeometry(0.45, 0.45, 0.9, 10), smat(0xc8a860, { roughness: 1 }), x, 0.45, -3.6); cols.push([x, -3.6, 0.5]); }
+    flat(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 12).rotateZ(Math.PI / 2), smat(0x3a5a8a), 4.6, 0.3, 1.8);
+    lantern(-2.5, 1.5); lantern(3, -1.5);
+    scroll(0);
+  } else if (kind === 'town') {
+    flat(new THREE.CylinderGeometry(0.75, 0.75, 0.05, 20), tmat('wood', 0x5a3020, 1, 1), 0, 0.35, -0.6);
+    flat(new THREE.CylinderGeometry(0.06, 0.06, 0.33, 6), dark, 0, 0.17, -0.6);
+    for (const a of [0, 1.6, 3.2, 4.8]) {
+      cushion(Math.cos(a) * 1.3, -0.6 + Math.sin(a) * 1.3, 0x7a1e1e);
+      flat(new THREE.CylinderGeometry(0.05, 0.04, 0.08, 8), smat(0x2a4a3a), Math.cos(a) * 0.45, 0.42, -0.6 + Math.sin(a) * 0.45);
+    }
+    cols.push([0, -0.6, 0.85]);
+    // Tokonoma alcove with a scroll and flowers.
+    flat(new THREE.BoxGeometry(2.2, 0.25, 0.9), tmat('wood', 0x4a2a18, 1, 1), 3.6, 0.12, -3.95);
+    scroll(3.6);
+    flat(new THREE.CylinderGeometry(0.12, 0.16, 0.4, 10), smat(0x2a3a5a), 4.3, 0.45, -3.9);
+    flat(new THREE.SphereGeometry(0.2, 8, 6), smat(0xff8aa8), 4.3, 0.8, -3.9);
+    cols.push([3.6, -3.9, 1.1]);
+    // Gold folding screen.
+    for (let k = 0; k < 4; k++) {
+      const m = flat(new THREE.BoxGeometry(0.7, 1.5, 0.04), smat(0xd8b048, { metalness: 0.5, roughness: 0.35 }), -4.7 + k * 0.62, 0.75, -2.6 + (k % 2) * 0.18);
+      m.rotation.y = (k % 2 ? 0.5 : -0.5);
+    }
+    cols.push([-3.8, -2.5, 1.2]);
+    tansu(-4.8, 2.6, Math.PI / 2); spots.stash = [-4.0, 2.6];
+    lantern(0, -0.6); lantern(-3, 2.5);
+  } else {
+    // The family home: hearth, the futon you sleep on, a small family altar.
+    irori(-2, -0.4);
+    for (const [x, z] of [[-3.2, -0.4], [-0.8, -0.4]]) cushion(x, z, 0x3a5a3a);
+    flat(new THREE.BoxGeometry(1.2, 0.18, 2.2), smat(0xe8e0d0), 3.8, 0.11, -2.4);
+    flat(new THREE.BoxGeometry(1.15, 0.1, 1.4), smat(0x8a3a3a), 3.8, 0.24, -2.0);
+    flat(new THREE.BoxGeometry(0.6, 0.15, 0.35), smat(0xf4f0e8), 3.8, 0.27, -3.25);
+    spots.bed = [3.8, -1.0];
+    flat(new THREE.BoxGeometry(1.0, 1.2, 0.5), tmat('wood', 0x2a1a12, 1, 1), 0.8, 0.6, -4.1);
+    flat(new THREE.BoxGeometry(0.5, 0.06, 0.3), smat(0xd8b048, { metalness: 0.6 }), 0.8, 1.1, -3.85);
+    flat(new THREE.CylinderGeometry(0.03, 0.03, 0.2, 6), smat(0xfff0d0, { emissive: 0xffa040, emissiveIntensity: 2 }), 0.6, 1.25, -3.85);
+    cols.push([0.8, -4.1, 0.6]);
+    tansu(-4.6, -3.9, 0); spots.stash = [-4.6, -3.1];
+    // A child's wooden toys by the wall.
+    flat(new THREE.ConeGeometry(0.12, 0.2, 10).rotateX(Math.PI), smat(0xc0392b), 4.6, 0.11, 2.6);
+    flat(new THREE.BoxGeometry(0.25, 0.25, 0.25), smat(0x3a6aa8), 4.2, 0.13, 3.0);
+    lantern(-2, -0.4); lantern(3, 1);
+    scroll(-3.6);
+  }
+  g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
+  return { group: g, cols, spots };
 }

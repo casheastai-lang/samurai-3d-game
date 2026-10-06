@@ -13,7 +13,7 @@ import {
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -36,6 +36,8 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 const hemi = new THREE.HemisphereLight(0xcfe2ff, 0x5a4a35, 0.55);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe2b8, 3.6);
+// Warm lantern light for whichever house interior the player is in.
+const roomLight = new THREE.PointLight(0xffb070, 0, 22, 1.4);
 sun.castShadow = true;
 Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 1, far: 260 });
 sun.shadow.bias = -0.0004;
@@ -68,6 +70,7 @@ composer.addPass(new ShaderPass({
 
 // Image-based lighting: the sky is rendered into an environment map, so metal, water
 // and lacquer reflect it. Rebuilt whenever the sky palette changes.
+scene.add(roomLight);
 const pmrem = new THREE.PMREMGenerator(renderer);
 let envRT = null, envKey = '';
 scene.environmentIntensity = 0.8;
@@ -291,7 +294,7 @@ const P = {
   blocking: false, blockPressT: -10, comboCount: 0, comboTimer: 0, lock: null,
   sheathed: true, combatT: 0, sheathT: 0,
   style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
-  life: null,
+  life: null, looted: [], outside: null, houseId: null,
 };
 // Village perks in the new life.
 const perk = key => !!P.life && ELEMENTS[P.life.village].key === key;
@@ -1877,6 +1880,7 @@ modalBox.addEventListener('click', e => {
     case 'villages': openVillageChoice(); break;
     case 'join': startNewLife(Number(arg)); break;
     case 'sleep': sleepAtHome(); break;
+    case 'inside': goInsideHome(); break;
     case 'talk': talkChoice(arg); break;
     case 'look': setLook(arg); break;
     case 'creator': openCreator(false); break;
@@ -1949,6 +1953,10 @@ function interact() {
   else if (it.kind === 'home') openHome(it.town);
   else if (it.kind === 'sensei') openSensei(it.town);
   else if (it.kind === 'well') drawWater();
+  else if (it.kind === 'house') enterHouse(it);
+  else if (it.kind === 'exit') exitHouse();
+  else if (it.kind === 'stash') searchStash();
+  else if (it.kind === 'bed') useBed();
   else openElder(it.town);
 }
 
@@ -2371,7 +2379,7 @@ function taskText(t) {
 }
 function updateQuest() {
   const q = $('quest');
-  if (!P.life || !P.life.task || !inNewWorld(P.pos.x)) { q.classList.add('hidden'); return; }
+  if (!P.life || !P.life.task || P.pos.x > -700) { q.classList.add('hidden'); return; }
   const el = ELEMENTS[P.life.village];
   q.classList.remove('hidden');
   q.style.setProperty('--el', el.css);
@@ -2496,6 +2504,58 @@ function echoDefeated() {
     nextTask();
   }, 2500);
 }
+// ---- Going in and out of houses.
+function enterRoom(kind, out, id, town) {
+  const room = rooms.find(r => r.kind === kind);
+  P.outside = out;
+  P.houseId = id;
+  P.houseTown = town;
+  ui = 'travel';
+  const fade = $('fade');
+  fade.style.opacity = '1';
+  setTimeout(() => {
+    P.pos.set(room.spawn.x, 0, room.spawn.z);
+    P.y = 0; P.vy = 0; P.kb.set(0, 0, 0); P.lock = null;
+    P.facing = Math.PI; camYaw = 0;
+    fade.style.opacity = '0';
+    ui = null;
+  }, 350);
+}
+function enterHouse(it) {
+  enterRoom(it.room, it.out, it.id, it.town);
+}
+function exitHouse() {
+  const o = P.outside ?? { x: TOWNS[P.lastTown].spawn.x, z: TOWNS[P.lastTown].spawn.z, facing: TOWNS[P.lastTown].spawnFacing };
+  ui = 'travel';
+  const fade = $('fade');
+  fade.style.opacity = '1';
+  setTimeout(() => {
+    P.pos.set(o.x, 0, o.z);
+    P.y = height(o.x, o.z); P.vy = 0;
+    P.facing = o.facing; camYaw = o.facing + Math.PI;
+    P.outside = null; P.houseId = null;
+    fade.style.opacity = '0';
+    ui = null;
+  }, 350);
+}
+function searchStash() {
+  const id = P.houseId ?? 'none';
+  if (P.looted.includes(id)) { banner('', 'Nothing else here.', 1.4); return; }
+  P.looted.push(id);
+  const r = Math.random();
+  const gold = randInt(8, 30) + P.lvl * 3;
+  if (r < 0.3) { P.potions++; banner('Found a healing potion', id === 'home' ? 'Mother always keeps one for you.' : 'Tucked behind the rice bowls.', 2.2); }
+  else if (r < 0.4) { P.elixirs++; banner('Found an elixir', 'A rare find!', 2.2); }
+  else { P.gold += gold; banner(`Found ${gold} gold`, 'Coins in an old tea tin.', 2.2); }
+  burst(P.pos.x, P.y + 1, P.pos.z, 20, 0xffd860, 2, 3, 0.7, 1);
+  save();
+}
+function useBed() {
+  if (P.houseId === 'home') { sleepAtHome(); return; }
+  P.hp = Math.min(maxHp(), P.hp + maxHp() * 0.5);
+  banner('A short nap', 'You feel better.', 1.6);
+}
+
 function openHome(town) {
   const L = P.life;
   const el = ELEMENTS[town.element];
@@ -2518,7 +2578,12 @@ function openHome(town) {
   openModal(`<h2>Home &middot; ${el.parents.join(' &amp; ')}</h2>
     ${lines.map(l => `<p>${l}</p>`).join('')}
     ${task ? `<p class="sub">Current task: ${taskText(task)}</p>` : ''}
-    <div class="btns"><button data-act="sleep">Sleep (heal &amp; save)</button><button class="secondary" data-act="close">Head out (E)</button></div>`, 'dialog');
+    <div class="btns"><button data-act="inside">Go inside</button><button data-act="sleep">Sleep (heal &amp; save)</button><button class="secondary" data-act="close">Head out (E)</button></div>`, 'dialog');
+}
+function goInsideHome() {
+  closeModal();
+  const h = nwSite.homes[P.life.village];
+  enterRoom('home', { x: h.x, z: h.z, facing: h.facing }, 'home', ELEMENTS[P.life.village].town);
 }
 function openSensei(town) {
   const el = ELEMENTS[town.element], L = P.life;
@@ -2568,7 +2633,10 @@ function drawMap(ctx, Wd, H, cx, cz, scale, full) {
   const X = x => Wd / 2 + (x - cx) * scale, Z = z => H / 2 + (z - cz) * scale;
   ctx.font = `${full ? 15 : 10}px ${getComputedStyle(document.body).fontFamily}`;
   ctx.textAlign = 'center';
-  if (inNewWorld(P.pos.x)) {
+  if (inInterior(P.pos.x)) {
+    ctx.fillStyle = '#3a2a1e'; ctx.fillRect(0, 0, Wd, H);
+    ctx.fillStyle = '#c8b080'; ctx.fillText('Indoors', Wd / 2, H / 2 + 30);
+  } else if (inNewWorld(P.pos.x)) {
     drawNwMap(ctx, X, Z, scale, full);
   } else if (realm) {
     for (const db of DEMON_BASES) {
@@ -2684,8 +2752,40 @@ let currentTown = null, arenaAnnounced = false, currentPlace = null, wasNw = fal
 const _w = [0, 0, 0, 0, 0];
 const _nwPal = { top: new THREE.Color(), hor: new THREE.Color(), sun: new THREE.Color(), hemi: 0.5 };
 const _center = new THREE.Vector3();
+function interactLabel(it) {
+  return it.kind === 'shop' ? 'Trade at ' + it.shop.shopName
+      : it.kind === 'shrine' ? 'Pray at the shrine &mdash; rest, save &amp; travel'
+      : it.kind === 'chest' ? (P.warlordsDead.includes(it.index) ? 'Open the treasure chest' : 'Sealed chest &mdash; defeat the warlord')
+      : it.kind === 'home' ? (P.life?.village === it.town.element ? 'Go home &mdash; your family' : 'Talk to the family')
+      : it.kind === 'sensei' ? 'Talk to ' + ELEMENTS[it.town.element].sensei
+      : it.kind === 'well' ? 'Draw water from the well'
+      : it.kind === 'house' ? 'Go inside the house'
+      : it.kind === 'exit' ? 'Step outside'
+      : it.kind === 'stash' ? (P.looted.includes(P.houseId) ? 'The cupboard is empty' : 'Search the cupboard')
+      : it.kind === 'bed' ? (P.houseId === 'home' ? 'Sleep in your futon (heal &amp; save)' : 'Rest on the futon')
+      : 'Talk to the elder';
+}
 function updateWorldState(dt) {
   if (inNewWorld(P.pos.x) !== wasNw) { wasNw = !wasNw; updateQuest(); }
+  const inside = inInterior(P.pos.x);
+  roomLight.intensity = inside ? 45 : 0;
+  sun.intensity = inside ? 0 : 3.6;
+  if (inside) {
+    const r = roomAt(P.pos.x, P.pos.z);
+    roomLight.position.set(r.x, 2.6, r.z - 0.5);
+    hud.locName.textContent = P.houseId === 'home' ? 'Your home' : 'A house in ' + (P.houseTown?.name ?? 'the village');
+    hud.locSub.textContent = P.houseId === 'home' ? ELEMENTS[P.life?.village ?? 0].parents.join(' & ') + "'s house" : r.kind === 'town' ? 'A merchant family\'s house' : 'A farming family\'s house';
+    scene.fog.color.set(0x2a1e14); scene.fog.near = 14; scene.fog.far = 60;
+    hemi.intensity = 0.45; hemi.groundColor.set(0x5a4030);
+    updateSky(camera.position, dt, PAL.day.top, PAL.day.hor, PAL.day.sun, true);
+    refreshEnvironment('day');
+    scene.environmentIntensity = 0.35;
+    updateAmbient(dt, _center.set(P.pos.x, P.y, P.pos.z), 'none', time);
+    const it = nearInteract();
+    hud.prompt.style.display = it ? 'block' : 'none';
+    if (it) hud.prompt.innerHTML = '<b class="gold">[E]</b> ' + interactLabel(it);
+    return;
+  }
   const t = townAt(P.pos.x, P.pos.z);
   const realm = demonBaseAt(P.pos.x, P.pos.z);
   const nb = realm ? null : ninjaBaseAt(P.pos.x, P.pos.z);
@@ -2767,13 +2867,7 @@ function updateWorldState(dt) {
   const it = P.dead ? null : nearInteract();
   if (it) {
     hud.prompt.style.display = 'block';
-    const label = it.kind === 'shop' ? 'Trade at ' + it.shop.shopName
-      : it.kind === 'shrine' ? 'Pray at the shrine &mdash; rest, save &amp; travel'
-      : it.kind === 'chest' ? (P.warlordsDead.includes(it.index) ? 'Open the treasure chest' : 'Sealed chest &mdash; defeat the warlord')
-      : it.kind === 'home' ? (P.life?.village === it.town.element ? 'Go home &mdash; your family' : 'Talk to the family')
-      : it.kind === 'sensei' ? 'Talk to ' + ELEMENTS[it.town.element].sensei
-      : it.kind === 'well' ? 'Draw water from the well'
-      : 'Talk to the elder';
+    const label = interactLabel(it);
     hud.prompt.innerHTML = '<b class="gold">[E]</b> ' + label;
   } else hud.prompt.style.display = 'none';
 }
@@ -2808,6 +2902,13 @@ function updateCamera(dt) {
     cy = Math.max(height(cx, cz) + 1.2, th * 0.75);
     camera.position.set(cx, cy, cz);
     camera.lookAt(T.pos.x, th, T.pos.z);
+  } else if (inInterior(P.pos.x)) {
+    // Indoors: a closer camera that stays inside the walls and under the ceiling.
+    const r = roomAt(P.pos.x, P.pos.z), d = Math.min(camDist, 4.2);
+    let ix = tx + Math.sin(camYaw) * cp * d, iz = tz + Math.cos(camYaw) * cp * d;
+    ix = clamp(ix, r.x - 5.6, r.x + 5.6); iz = clamp(iz, r.z - 4.1, r.z + 4.1);
+    camera.position.set(ix, clamp(ty + Math.sin(camPitch) * d + 0.4, 0.8, 2.85), iz);
+    camera.lookAt(tx, ty, tz);
   } else {
     camera.position.set(cx, cy, cz);
     camera.lookAt(tx, ty, tz);
@@ -2829,7 +2930,7 @@ function save() {
       ownedWeapons: P.ownedWeapons, skin: P.skin, ownedSkins: P.ownedSkins, look: P.look,
       style: P.style, bow: P.bow, ownedBows: P.ownedBows,
       mastersDead: P.mastersDead, warlordsDead: P.warlordsDead, chestsLooted: P.chestsLooted,
-      life: P.life,
+      life: P.life, looted: P.looted,
     }));
   } catch { /* storage unavailable: play on without saving */ }
 }
@@ -2869,8 +2970,10 @@ function startGame(s) {
     lvl: 1, xp: 0, gold: 0, potions: 2, elixirs: 0, weapon: 'worn', armor: 'cloth', charms: [],
     discovered: [0], lastTown: 0, bossDead: false, kills: 0, ownedWeapons: ['worn'], skin: 'ronin', ownedSkins: ['ronin', 'custom'],
     look: { ...DEFAULT_LOOK }, style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
-    mastersDead: [], warlordsDead: [], chestsLooted: [], life: null,
+    mastersDead: [], warlordsDead: [], chestsLooted: [], life: null, looted: [],
   }, s ?? {});
+  P.looted = [...(P.looted ?? [])];
+  P.outside = null; P.houseId = null;
   P.life = P.life ? { ...P.life } : null;
   for (const k of ['charms', 'discovered', 'ownedWeapons', 'ownedSkins', 'mastersDead', 'warlordsDead', 'chestsLooted', 'ownedBows']) P[k] = [...P[k]];
   P.sheathed = P.style !== 'archer';
@@ -2907,7 +3010,7 @@ window.__game = {
   renderer, P, enemies, TOWNS, interactables, NINJA_BASES, DEMON_BASES, projectiles,
   get boss() { return boss; }, get ui() { return ui; }, get gfxHigh() { return gfxHigh; },
   setCam(yaw, pitch, dist) { camYaw = yaw; camPitch = pitch; camDist = dist; },
-  unsheath, startNewLife, finishTask, get echo() { return echo; }, nwSite, ELEMENTS,
+  unsheath, startNewLife, finishTask, get echo() { return echo; }, nwSite, ELEMENTS, rooms,
 };
 
 const clock = new THREE.Clock();

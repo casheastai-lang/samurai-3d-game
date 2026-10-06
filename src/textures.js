@@ -166,3 +166,25 @@ export const tigerTex = () => once('tiger', () => toTexture(paint(256, (x, y) =>
   if (stripe > 0.55) return [30 * v, 22 * v, 14 * v];
   return [225 * v, 160 * v, 40 * v];
 }), true, [2, 1]));
+
+// Tatami: woven rush mats in a staggered grid, with dark cloth borders on the long edges.
+export const tatamiTex = () => once('tatami', () => toTexture(paint(256, (x, y) => {
+  // One texture tile holds two mats side by side, each 128 wide and 256 long.
+  const lx = x % 128;
+  if (lx < 7 || lx > 120) return [46, 40, 30];
+  const weave = (y % 4) < 2 ? 10 : 0;
+  const n = fbm(x, y, 256, 16, 3);
+  return [176 + weave + n * 30, 170 + weave + n * 26, 104 + n * 20];
+}), true, [1, 1]));
+
+// A hanging scroll: a single brushed character on paper.
+export const scrollTex = (ch = '道') => once('scroll' + ch, () => {
+  const c = canvas(128);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#efe6d0'; ctx.fillRect(0, 0, 128, 128);
+  ctx.fillStyle = '#1a1410';
+  ctx.font = 'bold 84px serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(ch, 64, 70);
+  return toTexture(c);
+});

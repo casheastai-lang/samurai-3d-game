@@ -191,6 +191,8 @@ TOWNS.forEach((t, i) => {
 // After the Demon King falls, his curse throws the hero into another world: an island
 // of five villages, one for each element, where they are reborn as a child.
 export const NEW_X = -700;
+// House interiors are rooms built far off to the west, past the new world.
+export const INTERIOR_X = -2000;
 export const NW = { x: -1150, z: -600, r: 300, ring: 150 };
 export const ELEMENTS = [
   {
@@ -240,8 +242,11 @@ ELEMENTS.forEach((el, k) => {
   el.index = k;
   const t = {
     name: el.village, nw: true, element: k, wall: el.wall, roof: el.roof, snow: el.key === 'ice',
-    x: NW.x + Math.cos(a) * NW.ring, z: NW.z + Math.sin(a) * NW.ring, r: TOWN_R + 6, index: TOWNS.length,
-    shops: [shop(el.name + ' Village Store', 'The village merchant', ['potion', 'elixir', 'w:steel', 'w:kaze', 'w:tama', 'b:yumi', 'b:lacquered', 'a:leather', 'a:iron', 'c:stamina', 'c:vitality'])],
+    x: NW.x + Math.cos(a) * NW.ring, z: NW.z + Math.sin(a) * NW.ring, r: 64, big: true, index: TOWNS.length,
+    shops: [
+      shop(el.name + ' Village Store', 'The village merchant', ['potion', 'elixir', 'b:yumi', 'b:lacquered', 'a:leather', 'a:iron', 'c:stamina', 'c:vitality']),
+      shop(el.name + ' Smithy', 'The village smith', ['w:steel', 'w:kaze', 'w:tama', 'w:frost', 'w:nodachi', 'a:iron']),
+    ],
     elderTitle: 'Elder of ' + el.village,
     elder: [
       `Welcome to ${el.village}, little one. The ${el.name} village has watched over this island since the first dawn.`,

@@ -2,12 +2,13 @@
 import * as THREE from 'three';
 import {
   PATH, ARENA, BOUNDS, TOWNS, TOWN_IDX, NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, REALM_X, ASH_Z,
-  LAKES, WATER_Y, FROST, MAIN_TOWNS, NEW_X, NW, ELEMENTS, NW_TOWNS,
+  LAKES, WATER_Y, FROST, MAIN_TOWNS, NEW_X, NW, ELEMENTS, NW_TOWNS, INTERIOR_X,
 } from './data.js';
 import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
   makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat, mergeStatic,
   makeCastle, makePagoda, makeCityWall, makeGatehouse, makeKura, makeWell, makeFence, makeTempleHall, makeArchBridge,
+  makeRoom, ROOM_W, ROOM_D,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
@@ -65,16 +66,21 @@ NW_TOWNS.forEach((t, k) => {
   const ux = (t.x - NW.x) / NW.ring, uz = (t.z - NW.z) / NW.ring;
   t.attach = [NW.x + ux * HUB_R, NW.z + uz * HUB_R];
   TRAILS.push([t.attach[0], t.attach[1], t.x, t.z]);
-  const n = NW_TOWNS[(k + 1) % NW_TOWNS.length];
-  TRAILS.push([t.x, t.z, n.x, n.z]);
+  // Every village links to its two neighbors and, across the island, to the other two.
+  for (const hop of [1, 2]) {
+    const n = NW_TOWNS[(k + hop) % NW_TOWNS.length];
+    TRAILS.push([t.x, t.z, n.x, n.z]);
+  }
+  // A coastal path out past each village.
+  TRAILS.push([t.x, t.z, NW.x + (t.x - NW.x) / NW.ring * 235, NW.z + (t.z - NW.z) / NW.ring * 235]);
 });
 {
-  const w = ELEMENTS.find(e => e.key === 'water').town;
-  const ux = (w.x - NW.x) / NW.ring, uz = (w.z - NW.z) / NW.ring;
-  // Shifted sideways off the outward path so the lake sits beside it.
-  LAKES.push({ x: w.x + ux * 66 - uz * 30, z: w.z + uz * 66 + ux * 30, r: 26, nw: true });
+  // Mizumura's lotus lake, between the Water and Shadow villages near the shore.
+  const a = (ELEMENTS[4].angle + ELEMENTS[0].angle + Math.PI * 2) / 2;
+  LAKES.push({ x: NW.x + Math.cos(a) * 218, z: NW.z + Math.sin(a) * 218, r: 26, nw: true });
 }
-const inNewWorld = x => x < NEW_X;
+const inNewWorld = x => x < NEW_X && x > INTERIOR_X;
+const inInterior = x => x < INTERIOR_X;
 // Which element's lands a point lies in, by its bearing from the Crossroads.
 function nwSector(x, z) {
   const a = Math.atan2(z - NW.z, x - NW.x);
@@ -162,7 +168,7 @@ function nwHeight(x, z) {
   return lerp(h, -2.6, carve);
 }
 function height(x, z) {
-  if (x > REALM_X) return 0;
+  if (x > REALM_X || x < INTERIOR_X) return 0;
   if (x < NEW_X) return nwHeight(x, z);
   let carve = 0, lakeFlat = 1, shore = 0;
   for (const l of LAKES) {
@@ -340,6 +346,12 @@ function collideStatic(pos, r) {
   }
 }
 function clampBounds(pos) {
+  if (inInterior(pos.x)) {
+    const r = roomAt(pos.x, pos.z);
+    pos.x = clamp(pos.x, r.x - ROOM_W / 2 + 0.5, r.x + ROOM_W / 2 - 0.5);
+    pos.z = clamp(pos.z, r.z - ROOM_D / 2 + 0.5, r.z + ROOM_D / 2 + 0.2);
+    return;
+  }
   if (inNewWorld(pos.x)) {
     const dx = pos.x - NW.x, dz = pos.z - NW.z, d = Math.hypot(dx, dz), max = NW.r - 22;
     if (d > max) { pos.x = NW.x + dx / d * max; pos.z = NW.z + dz / d * max; }
@@ -603,7 +615,7 @@ function buildTown(t) {
   const at = (f, sd) => [t.x + dx * f + px * sd, t.z + dz * f + pz * sd];
 
   // Shop stalls with their merchants. Cities have two: a market and a master forge.
-  const shopSpots = t.city ? [at(6, 12), at(-9, 12)] : [at(0, 12)];
+  const shopSpots = t.city ? [at(6, 12), at(-9, 12)] : t.shops.length > 1 ? [at(0, 12), at(-12, 13)] : [at(0, 12)];
   const clothColors = [0x24467a, 0x2a6a4a, 0x6a2a5a, 0x222222, 0x7a4a1a, 0x3a1a1a];
   t.shops.forEach((shop, k) => {
     const [sx, sz] = shopSpots[k];
@@ -675,6 +687,14 @@ function houseBlock(t, spots) {
     if (tall && !kura) h.scale.y = 1.3;
     block.add(h);
     addCollider(x, z, Math.max(w, d) * 0.62);
+    if (!kura) {
+      // The front door: press E to go inside.
+      const fa = h.rotation.y, fx = Math.sin(fa), fz = Math.cos(fa), r = Math.max(w, d) * 0.62 + 0.9;
+      interactables.push({
+        kind: 'house', town: t, id: t.index + ':' + k, room: k % 3 === 0 ? 'town' : 'farm',
+        x: x + fx * r, z: z + fz * r, out: { x: x + fx * (r + 1.2), z: z + fz * (r + 1.2), facing: fa },
+      });
+    }
   }
   scene.add(block);
   mergeStatic(block);
@@ -732,6 +752,30 @@ function plantRice() {
   chunkedInstances(tuft, mat, mats, { cell: 96, range: 150, shadow: false });
 }
 
+// Ring streets through a big village, with lanterns along them.
+function bigVillageStreets(t) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0xa48a62, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  for (const r of [31.5, 51]) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r - 2, r + 2, 72).rotateX(-Math.PI / 2), mat);
+    ring.position.set(t.x, height(t.x, t.z) + 0.06, t.z);
+    ring.receiveShadow = true;
+    g.add(ring);
+    const n = Math.round(r / 3);
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + 0.2;
+      const x = t.x + Math.cos(a) * (r + 2.6), z = t.z + Math.sin(a) * (r + 2.6);
+      if (roadDist(x, z) < 4) continue;
+      const l = makeStoneLantern(true);
+      l.position.set(x, height(x, z), z);
+      g.add(l);
+      addCollider(x, z, 0.45);
+    }
+  }
+  scene.add(g);
+  mergeStatic(g);
+}
+
 function buildVillage(t, prev, next, keepClear, at) {
   // A well in the plaza.
   const [wx, wz] = at(-8, 5);
@@ -740,7 +784,8 @@ function buildVillage(t, prev, next, keepClear, at) {
   keepClear.push([wx, wz, 5]);
   // Two rings of houses and storehouses.
   const spots = [];
-  const rings = t.hamlet ? [[16, 9]] : [[18, 12], [25.5, 16]];
+  const rings = t.hamlet ? [[16, 9]] : t.big ? [[18, 12], [25.5, 16], [37.5, 22], [45, 26], [56.5, 32]] : [[18, 12], [25.5, 16]];
+  if (t.big) bigVillageStreets(t);
   let k = 0;
   for (const [rr, n] of rings) {
     for (let j = 0; j < n; j++, k++) {
@@ -1426,6 +1471,30 @@ function buildHomeAndDojo(t, at, keepClear) {
   keepClear.push([dx, dz, 7]);
 }
 
+// ---- House interiors, one room per kind, far to the west.
+const rooms = [];
+function buildInteriors() {
+  ['farm', 'town', 'home'].forEach((kind, k) => {
+    const x = INTERIOR_X - 400 - k * 40, z = 0;
+    const r = makeRoom(kind, ['道', '和', '家'][k]);
+    r.group.position.set(x, 0, z);
+    scene.add(r.group);
+    mergeStatic(r.group);
+    for (const [cx, cz, cr] of r.cols) addCollider(x + cx, z + cz, cr);
+    const at = p => (p ? { x: x + p[0], z: z + p[1] } : null);
+    const room = { kind, x, z, spawn: at(r.spots.spawn), exit: at(r.spots.exit), stash: at(r.spots.stash), bed: at(r.spots.bed) };
+    rooms.push(room);
+    interactables.push({ kind: 'exit', room, x: room.exit.x, z: room.exit.z });
+    if (room.stash) interactables.push({ kind: 'stash', room, x: room.stash.x, z: room.stash.z });
+    if (room.bed) interactables.push({ kind: 'bed', room, x: room.bed.x, z: room.bed.z });
+  });
+}
+function roomAt(x, z) {
+  let best = rooms[0], bd = Infinity;
+  for (const r of rooms) { const d = Math.hypot(x - r.x, z - r.z); if (d < bd) { bd = d; best = r; } }
+  return best;
+}
+
 function buildNewWorld() {
   const W = [0, 0, 0, 0, 0];
   // ---- Terrain disc, colored by element.
@@ -1550,13 +1619,13 @@ function buildElementLands(el) {
       add(pool, p[0], p[1], 0, 0.5);
     }
     // A great forge chimney outside the village.
-    const fx = t.x + ux * 48, fz = t.z + uz * 48 + 14;
+    const fx = t.x + ux * 82 - uz * 18, fz = t.z + uz * 82 + ux * 18;
     const chim = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 12, 10), tmat('stone', 0x8a6a5a, 2, 3));
     chim.castShadow = true;
     add(chim, fx, fz, 2.4, 6);
   } else if (el.key === 'golden') {
-    placeObj(makePagoda(0xb8901a), t.x + ux * 54 + uz * 18, t.z + uz * 54 - ux * 18, el.angle);
-    addCollider(t.x + ux * 54 + uz * 18, t.z + uz * 54 - ux * 18, 5);
+    placeObj(makePagoda(0xb8901a), t.x + ux * 84 + uz * 22, t.z + uz * 84 - ux * 22, el.angle);
+    addCollider(t.x + ux * 84 + uz * 22, t.z + uz * 84 - ux * 22, 5);
     // Wheat fields: rows of tall golden stalks.
     const stalks = [], dummy = new THREE.Object3D();
     for (let f = 0; f < 6; f++) {
@@ -1671,9 +1740,10 @@ function buildWorld(sc) {
   NINJA_BASES.forEach(buildNinjaBase);
   DEMON_BASES.forEach(buildDemonBase);
   buildNewWorld();
+  buildInteriors();
 }
 
 export {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, ninjaPortals, segDist,
 };

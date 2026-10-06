@@ -85,7 +85,16 @@ You start with an oak bokken. You get a steel katana at 12, and you grow a littl
 At 16 the elder holds your coming-of-age ceremony and gives you the village's heirloom blade. Then the **Echo of Shuten-doji** wakes beneath the sacred tree, and you finish what you started.
 After that your life goes on: take jobs for gold and grow old in your village. Your hair turns gray at 45.
 
-Your home is in your village: talk to your family by the door, and sleep there to heal and save.
+The five villages are huge: five rings of houses, two lantern-lit ring streets, a general store and a smithy.
+Paths link every village to the Crossroads, to its neighbors, to the two villages across the island, and out to the coast.
+
+Your home is in your village: talk to your family by the door, go inside, and sleep in your futon to heal and save.
+
+### Going inside houses
+
+Every house in every village and city has a door. Walk up to it and press **E** to go inside.
+Inside you'll find a farmhouse with a sunken hearth, or a merchant's house with a tea table, a scroll alcove and a gold folding screen.
+Search the cupboard in each house once for gold or potions. Press E at the door to step back outside.
 
 ### Ninja bases and demon fortresses
 
