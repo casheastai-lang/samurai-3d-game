@@ -59,7 +59,7 @@ export const DEMON_BASES = [
 export const TOWNS = [
   {
     name: 'Sakura Village', wall: 0xeadfc8, roof: 0x3d4656,
-    shops: [{ shopName: 'Hanami General Store', merchant: 'Old Tomoe, shopkeeper', stock: ['potion', 'w:steel', 'w:kaze', 'a:leather'] }],
+    shops: [{ shopName: 'Hanami General Store', merchant: 'Old Tomoe, shopkeeper', stock: ['potion', 'w:steel', 'w:kaze', 'b:yumi', 'a:leather'] }],
     elder: [
       'Ronin, thank the heavens you came. Demons pour down from Oni Mountain in the far north.',
       'Their master is Shuten-doji, the Demon King. No blade in this village can stand against him.',
@@ -69,7 +69,7 @@ export const TOWNS = [
   },
   {
     name: 'Kawaguchi', wall: 0xe2d2b0, roof: 0x4a3326,
-    shops: [{ shopName: 'Riverside Smithy', merchant: 'Genzo the smith', stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'c:stamina'] }],
+    shops: [{ shopName: 'Riverside Smithy', merchant: 'Genzo the smith', stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'b:lacquered', 'a:iron', 'c:stamina'] }],
     elder: [
       'Red oni stalk the riverlands now. They hit hard but swing slow &mdash; parry them, or roll through the blow.',
       'Every strike you land fills your Ki. When it is full, press X: draw like lightning and cut down every foe around you in a single breath. We call it Iaijutsu.',
@@ -80,7 +80,7 @@ export const TOWNS = [
     name: 'Miyako, the Capital', city: true, wall: 0xf2ece0, roof: 0x2f3a4a,
     shops: [
       { shopName: 'Grand Market of Miyako', merchant: 'Merchant Guild of the Capital', stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'a:oyoroi', 'c:stamina', 'c:vitality'] },
-      { shopName: 'Forge of Masamune', merchant: 'Masamune, master swordsmith', stock: ['w:kogarasu', 'w:mura', 'w:nodachi', 'w:inferno'] },
+      { shopName: 'Forge of Masamune', merchant: 'Masamune, master swordsmith', stock: ['w:kogarasu', 'w:mura', 'w:nodachi', 'w:inferno', 'b:lacquered', 'b:shigeto'] },
     ],
     elderTitle: 'Magistrate of Miyako',
     elder: [
@@ -100,7 +100,7 @@ export const TOWNS = [
   },
   {
     name: 'Tsukimura', wall: 0xd8d4c8, roof: 0x34304a,
-    shops: [{ shopName: 'Moon Gate Trader', merchant: 'Widow Aoi', stock: ['potion', 'elixir', 'w:raijin', 'a:dragon', 'c:regen'] }],
+    shops: [{ shopName: 'Moon Gate Trader', merchant: 'Widow Aoi', stock: ['potion', 'elixir', 'w:raijin', 'b:raiden', 'a:dragon', 'c:regen'] }],
     elder: [
       'Our village watches the moon, and lately it rises red over Oni Mountain.',
       'The Black Lotus ninjas keep their stronghold east of the forest road. Their master is the last seal.',
@@ -111,7 +111,7 @@ export const TOWNS = [
     name: 'Kurogane Castle City', city: true, wall: 0xc9c2b6, roof: 0x241d1d,
     shops: [
       { shopName: 'Fortress Quartermaster', merchant: 'Captain Ayame', stock: ['potion', 'elixir', 'w:onikiri', 'a:dragon', 'c:regen'] },
-      { shopName: 'Black Iron Forge', merchant: 'Old Yasutsuna', stock: ['w:dojigiri', 'w:onikiri', 'w:raijin'] },
+      { shopName: 'Black Iron Forge', merchant: 'Old Yasutsuna', stock: ['w:dojigiri', 'w:onikiri', 'w:raijin', 'b:raiden', 'b:hamaya'] },
     ],
     elderTitle: 'Lord of Kurogane',
     elder: [
@@ -150,6 +150,23 @@ export const WEAPONS = {
   bloodmoon: { name: 'Blood Moon', atk: 42, price: 0, color: 0xff3030, glow: 0xc00000, effect: 'burn', style: 'jagged', desc: "Taken from Mezu. Burns with a crimson fire.", reward: true },
   celestial: { name: 'Celestial Blade', atk: 52, price: 0, color: 0xffffff, glow: 0x9ad8ff, effect: 'shock', len: 1.15, desc: 'Taken from Ibaraki. Calls down the storm.', reward: true },
   yamata:    { name: 'Yamata Dragonblade', atk: 62, price: 0, color: 0x80ffb0, glow: 0x00c060, effect: 'demonbane', len: 1.3, reach: 0.6, style: 'nodachi', desc: 'Taken from Kuro. The bane of all demons.', reward: true },
+};
+
+// Bows for the archer style. Damage comes from the bow's atk instead of the sword's.
+export const BOWS = {
+  hankyu:    { name: 'Hunting Hankyu', atk: 9, price: 0, color: 0x6a4a2a, glow: 0x000000, desc: 'A short hunting bow.' },
+  yumi:      { name: 'Bamboo Yumi', atk: 15, price: 100, color: 0x8a6a3a, glow: 0x000000, desc: 'Laminated bamboo, taller than a man.' },
+  lacquered: { name: 'Lacquered Yumi', atk: 23, price: 280, color: 0x2a1a1a, glow: 0x000000, desc: 'Black lacquer and red silk wrapping.' },
+  shigeto:   { name: 'Shigeto-yumi', atk: 32, price: 620, color: 0x3a1a1a, glow: 0x3aa0ff, effect: 'frost', desc: 'Rattan-bound. Frost: arrows slow enemies. Sold in Miyako.' },
+  raiden:    { name: 'Raiden Bow', atk: 42, price: 950, color: 0x2a2a3a, glow: 0xffd000, effect: 'shock', desc: 'Shock: lightning leaps from each arrow.' },
+  hamaya:    { name: 'Hamaya, Demon-Banishing Bow', atk: 54, price: 1600, color: 0xe8e0d0, glow: 0xff5040, effect: 'demonbane', desc: 'A sacred shrine bow. +50% damage to demons. Sold in Kurogane.' },
+};
+
+// Fighting styles, picked in the character creator.
+export const STYLES = {
+  two:    { name: 'Two-Handed Samurai', special: 'Thousand Cuts', desc: 'Katana in both hands. Heavy cuts, quick-draw from the scabbard.' },
+  one:    { name: 'One-Handed Swordsman', special: 'Whirlwind Dance', desc: 'Sword in one hand. Faster 4-hit combos and cheaper dodges, lighter blows.' },
+  archer: { name: 'Archer', special: 'Rain of Arrows', desc: 'Yumi bow. Click to shoot, right-click for a piercing power shot.' },
 };
 
 export const ARMORS = {

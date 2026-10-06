@@ -453,7 +453,8 @@ export function makeHumanoid(o = {}) {
   weapon.rotation.x = wristRest;
 
   root.scale.setScalar(o.scale ?? 1);
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana', blade, sheathedHilt };
+  const bow = o.bow ? makeBowRig(armL, body, o.bow) : null;
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana' && o.grip !== 'one', blade, sheathedHilt, bow };
   mergeRig(rig);
   return rig;
 }
@@ -900,4 +901,72 @@ export function makeGatehouse(roofColor) {
   hipRoof(g, 12, 4.6, 7.7, tint, 1.3);
   for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.28, 0.32, 6, 12), smat(0x3a2418), sx * 4.4, 3, 0, g);
   return g;
+}
+
+// ---------- Yumi bow ----------
+// Held in the off hand. In the hand's frame the bow's long axis is +Z (straight up
+// when the arm aims forward), the shot travels along -Y and the archer is toward +Y.
+// The grip sits a third of the way up, as on a real yumi.
+export function makeBowRig(armL, body, o) {
+  const g = new THREE.Group();
+  g.position.y = -0.68;
+  armL.add(g);
+  const wood = new THREE.MeshStandardMaterial({ color: o.color ?? 0x6a4a2a, roughness: 0.35, emissive: o.glow ?? 0x000000, emissiveIntensity: o.glow ? 1.6 : 0 });
+  const bottom = new THREE.Vector3(0, 0.2, -0.78), top = new THREE.Vector3(0, 0.24, 1.5);
+  const curve = new THREE.CatmullRomCurve3([bottom, new THREE.Vector3(0, 0.03, -0.45), new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0.05, 0.75), top]);
+  const limb = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, 0.024, 6), wood);
+  limb.castShadow = true;
+  g.add(limb);
+  const wrap = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.16, 10).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x7a1a14, roughness: 0.8 }));
+  g.add(wrap);
+  // String: bottom tip, nocking point, top tip. The nocking point follows the drawing hand.
+  const restNock = bottom.clone().lerp(top, 0.33);
+  const sGeo = new THREE.BufferGeometry().setFromPoints([bottom, restNock, top]);
+  const string = new THREE.Line(sGeo, new THREE.LineBasicMaterial({ color: 0xe8e0c8 }));
+  g.add(string);
+  // An arrow on the string, shown while drawing.
+  const arrow = makeArrowMesh(0.95);
+  arrow.visible = false;
+  g.add(arrow);
+  // Quiver on the back with fletched arrows poking out.
+  const quiver = new THREE.Group();
+  quiver.position.set(0.16, 0.55, -0.27);
+  quiver.rotation.set(0.2, 0, -0.35);
+  const q = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.75, 12), new THREE.MeshStandardMaterial({ color: 0x3a2418, roughness: 0.7, bumpMap: grainTex(), bumpScale: 1 }));
+  q.castShadow = true;
+  quiver.add(q);
+  for (let i = 0; i < 6; i++) {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.14, 0.05), new THREE.MeshStandardMaterial({ color: i % 2 ? 0xe8e0d0 : 0x8a1a14 }));
+    f.position.set(Math.cos(i) * 0.04, 0.44 + (i % 3) * 0.03, Math.sin(i) * 0.04);
+    quiver.add(f);
+  }
+  body.add(quiver);
+  return { group: g, string, sGeo, bottom, top, restNock, arrow, nock: restNock.clone() };
+}
+
+// Arrow along +Z: shaft, steel head at the front, fletching at the back.
+export function makeArrowMesh(len = 0.95, glow = 0x000000) {
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, len, 5).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xc8a870, roughness: 0.6 }));
+  shaft.position.z = len / 2;
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.08, 4).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xb0b8c0, metalness: 0.9, roughness: 0.25, emissive: glow, emissiveIntensity: glow ? 2 : 0 }));
+  head.position.z = len + 0.03;
+  g.add(shaft, head);
+  for (let i = 0; i < 3; i++) {
+    const f = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.05, 0.12), new THREE.MeshStandardMaterial({ color: i ? 0xe8e0d0 : 0x8a1a14 }));
+    f.position.z = 0.08;
+    f.rotation.z = (i / 3) * Math.PI * 2;
+    f.position.x = Math.sin(f.rotation.z) * 0.02; f.position.y = Math.cos(f.rotation.z) * 0.02;
+    g.add(f);
+  }
+  return g;
+}
+
+// Pull the string to a nocking point (in the bow's frame), or let it rest.
+export function setBowDraw(bow, nockLocal) {
+  const p = bow.sGeo.attributes.position;
+  const n = nockLocal ?? bow.restNock;
+  bow.nock.copy(n);
+  p.setXYZ(1, n.x, n.y, n.z);
+  p.needsUpdate = true;
 }

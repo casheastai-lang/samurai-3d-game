@@ -5,11 +5,11 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
-  PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER,
+  PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER, BOWS, STYLES,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
   NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK,
 } from './data.js';
-import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed } from './models.js';
+import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
   buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
@@ -188,6 +188,33 @@ function twoHandGrip(rig) {
   _grip.sub(_sh).normalize();
   rig.armL.quaternion.setFromUnitVectors(_down, _grip);
 }
+// Archer stance: bow arm out toward the target, string hand pulled back to the cheek.
+const _gp = new THREE.Vector3(), _nock = new THREE.Vector3();
+function poseBow(armX, draw) {
+  const b = rig.bow;
+  if (!b) return;
+  rig.armL.rotation.set(armX, 0.15, 0);
+  rig.body.rotation.y = lerp(rig.body.rotation.y, 0.25 * draw, 0.3);
+  rig.root.updateMatrixWorld(true);
+  b.group.getWorldPosition(_gp);
+  // Right hand: from the string at rest to full draw beside the face.
+  const fx = Math.sin(P.facing), fz = Math.cos(P.facing);
+  _hand.set(_gp.x - fx * (0.12 + 0.62 * draw), _gp.y + 0.04 + (armX < -2 ? 0.5 : 0), _gp.z - fz * (0.12 + 0.62 * draw));
+  rig.body.worldToLocal(_grip.copy(_hand));
+  _grip.sub(rig.armR.position).normalize();
+  rig.armR.quaternion.setFromUnitVectors(_down, _grip);
+  rig.root.updateMatrixWorld(true);
+  rig.armR.localToWorld(_nock.set(0, -0.68, 0));
+  if (draw > 0.05) {
+    setBowDraw(b, b.group.worldToLocal(_nock.clone()));
+    b.arrow.visible = true;
+    b.arrow.position.copy(b.nock);
+    b.arrow.lookAt(_gp);
+  } else {
+    setBowDraw(b, null);
+    b.arrow.visible = false;
+  }
+}
 // Step into the cut: front foot forward, back leg pushing, hips dropping.
 function poseFeet(rig, s) {
   rig.legL.rotation.x = lerp(0, -0.6, s);
@@ -228,6 +255,9 @@ const COMBO = [
   { anim: 'slashB', dur: 0.42, hitAt: 0.13, mult: 1.1, range: 2.9, dot: 0.1, cost: 8, lunge: 3, arc: 'h' },
   { anim: 'chop', dur: 0.6, hitAt: 0.24, mult: 1.7, range: 3.2, dot: 0.3, cost: 10, lunge: 5, arc: 'v', finisher: true },
 ];
+// One-handed: four quick cuts.
+const COMBO_ONE = [COMBO[0], COMBO[1], { ...COMBO[0], mult: 1.05 }, { ...COMBO[2], mult: 1.5 }];
+const comboList = () => (P.style === 'one' ? COMBO_ONE : COMBO);
 const HEAVY = { anim: 'heavy', dur: 0.85, hitAt: 0.45, mult: 2.4, range: 3.9, dot: -0.25, cost: 26, lunge: 6, arc: 'wide', heavy: true };
 const SPIRIT = { anim: 'spin', dur: 0.62, hitAt: 0.26, mult: 3.6, range: 6.5, dot: -2, cost: 0, lunge: 0, arc: 'wide', heavy: true, spirit: true };
 // Iai: the first cut comes straight out of the scabbard as a fast rising slash.
@@ -245,12 +275,19 @@ const P = {
   invul: 0, hitInvul: 0, stDelay: 0, dead: false, dodgeDir: new THREE.Vector3(),
   blocking: false, blockPressT: -10, comboCount: 0, comboTimer: 0, lock: null,
   sheathed: true, combatT: 0, sheathT: 0,
+  style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
 };
 const hasCharm = c => P.charms.includes(c);
 const W = () => WEAPONS[P.weapon];
 const maxHp = () => 100 + (P.lvl - 1) * 12 + (hasCharm('vitality') ? 50 : 0);
 const maxSt = () => 100 + (hasCharm('stamina') ? 40 : 0);
-const atkPower = () => 6 + (P.lvl - 1) * 2 + W().atk;
+const isArcher = () => P.style === 'archer';
+const B = () => BOWS[P.bow];
+// The equipped weapon: the bow for archers, the sword otherwise.
+const gear = () => (isArcher() ? B() : W());
+const atkPower = () => 6 + (P.lvl - 1) * 2 + gear().atk;
+// How each fighting style changes melee: attack speed, damage and stamina cost.
+const STYLE_MOD = { two: { speed: 0.95, mult: 1.12, cost: 1 }, one: { speed: 1.28, mult: 0.85, cost: 0.75 }, archer: { speed: 1, mult: 1, cost: 1 } };
 const defense = () => ARMORS[P.armor].def;
 
 const ARMOR_COLORS = { cloth: null, leather: 0x5a2e1c, iron: 0x4d535c, oyoroi: 0x8e1b1b, dragon: 0x1f6a5a };
@@ -260,20 +297,25 @@ function rebuildPlayerRig() {
   const w = W(), L = P.look, sk = SKINS[P.skin].custom
     ? { cloth: L.cloth, cloth2: L.cloth2, hat: L.hat === 'none' ? null : L.hat, scarf: L.scarf }
     : SKINS[P.skin];
+  const archer = isArcher();
+  if (archer) P.sheathed = false;
   rig = makeHumanoid({
-    cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf, weapon: 'katana', sheath: true,
+    cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf,
+    weapon: archer ? null : 'katana', sheath: !archer, grip: P.style === 'one' ? 'one' : 'two',
+    bow: archer ? { color: B().color, glow: B().glow } : null,
     skin: L.skin, hair: L.hair,
     armor: sk.armor ?? ARMOR_COLORS[P.armor],
     blade: { color: w.color, glow: w.glow, len: w.len ?? 1, style: w.style },
   });
   rig.armR.rotation.x = REST_ARM;
   setSheathed(rig, P.sheathed);
+  updateHint();
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
   rig.root.rotation.y = P.facing;
   scene.add(rig.root);
 }
 const slashColor = () => {
-  const w = W();
+  const w = gear();
   if (w.glow) return new THREE.Color(w.glow).lerp(new THREE.Color(0xffffff), 0.35).getHex();
   return 0xfff4e0;
 };
@@ -321,7 +363,7 @@ window.addEventListener('keydown', e => {
     case 'Digit1': drink('potion'); break;
     case 'Digit2': case 'KeyR': drink('elixir'); break;
     case 'KeyQ': P.blockPressT = time; break;
-    case 'KeyX': tryIai(); break;
+    case 'KeyX': if (isArcher()) tryRain(); else if (P.style === 'one') tryWhirl(); else tryIai(); break;
     case 'Tab': toggleLock(); break;
     case 'KeyM': toggleMap(); break;
     case 'KeyH': showHelp(); break;
@@ -359,6 +401,12 @@ document.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('wheel', e => { camDist = clamp(camDist + Math.sign(e.deltaY) * 0.8, 4.5, 16); }, { passive: true });
 
+function updateHint() {
+  const el = $('hint');
+  if (!el) return;
+  const attack = isArcher() ? 'Click shoot &middot; Right-click power shot' : 'Click slash &middot; Right-click heavy';
+  el.innerHTML = `WASD move &middot; ${attack} &middot; Q block/parry &middot; X ${STYLES[P.style].special} &middot; Tab lock-on &middot; Space jump &middot; F dodge &middot; E interact &middot; 1/2 heal &middot; I inventory &middot; M map &middot; H help`;
+}
 function toggleGfx() {
   gfxHigh = !gfxHigh;
   try { localStorage.setItem('roninsroad.gfx', gfxHigh ? 'high' : 'low'); } catch { /* ignore */ }
@@ -397,14 +445,15 @@ function toggleLock() {
 }
 
 function faceTarget() {
-  const t = (P.lock && P.lock.alive) ? P.lock : nearestEnemy(5.5);
+  const t = isArcher() ? aimTarget() : (P.lock && P.lock.alive) ? P.lock : nearestEnemy(5.5);
   const dir = inputDir();
   if (t) P.facing = Math.atan2(t.pos.x - P.pos.x, t.pos.z - P.pos.z);
   else if (dir.len > 0) P.facing = Math.atan2(dir.x, dir.z);
 }
 
 function tryAttack(heavy) {
-  if (P.dead || ['dodge', 'stunned', 'spirit', 'special'].includes(P.state)) return;
+  if (P.dead || ['dodge', 'stunned', 'spirit', 'special', 'whirl'].includes(P.state)) return;
+  if (isArcher()) { tryShoot(heavy); return; }
   if (P.state === 'attack') {
     if (!heavy && !P.atk.heavy && P.stateT > P.atk.hitAt * 0.5) P.queued = true;
     return;
@@ -412,12 +461,13 @@ function tryAttack(heavy) {
   startAttack(heavy ? HEAVY : COMBO[0], 0);
 }
 function unsheath() {
-  if (!P.sheathed) return;
+  if (!P.sheathed || isArcher()) return;
   P.sheathed = false;
   P.sheathT = 0;
   setSheathed(rig, false);
 }
 function sheathNow() {
+  if (isArcher()) return;
   P.sheathed = true;
   P.sheathT = 0;
   setSheathed(rig, true);
@@ -429,8 +479,9 @@ function startAttack(base, combo) {
     if (!base.heavy) base = DRAW;
     unsheath();
   }
-  const sp = W().speed ?? 1;
-  const A = { ...base, dur: base.dur / sp, hitAt: base.hitAt / sp, range: base.range + (W().reach ?? 0) };
+  const M = STYLE_MOD[P.style];
+  const sp = (W().speed ?? 1) * M.speed;
+  const A = { ...base, dur: base.dur / sp, hitAt: base.hitAt / sp, range: base.range + (W().reach ?? 0), mult: base.mult * M.mult, cost: base.cost * M.cost };
   P.st = Math.max(0, P.st - A.cost);
   P.stDelay = 0.9;
   P.state = 'attack'; P.atk = A; P.combo = combo; P.stateT = 0; P.hitDone = false; P.queued = false;
@@ -591,18 +642,144 @@ function updateSpecial(dt) {
   updateTrail(_base, _tip, S.phase === 'dash', slashColor(), dt);
 }
 
+// ============================================================ Archer
+// Picks what an arrow should fly at: the locked target, else the enemy closest to
+// where the camera is looking.
+function aimTarget(range = 42) {
+  if (P.lock && P.lock.alive && distTo(P.lock) < range) return P.lock;
+  const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
+  let best = null, bs = -Infinity;
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    const d = distTo(e);
+    if (d > range) continue;
+    const dot = ((e.pos.x - P.pos.x) * fx + (e.pos.z - P.pos.z) * fz) / (d || 1);
+    if (dot < 0.55) continue;
+    const sc = dot * 2 - d / 25;
+    if (sc > bs) { bs = sc; best = e; }
+  }
+  return best;
+}
+function tryShoot(heavy) {
+  if (P.state === 'attack') { if (!P.atk.heavy && P.stateT > P.atk.releaseAt) P.queued = true; return; }
+  const cost = heavy ? 18 : 5;
+  if (P.st < cost * 0.5) { floatText(headPos(), 'Exhausted', 'hurt', 0.7); return; }
+  P.st = Math.max(0, P.st - cost); P.stDelay = 0.8; P.combatT = 0;
+  P.state = 'attack'; P.stateT = 0; P.queued = false; P.blocking = false;
+  P.atk = heavy ? { bow: true, heavy: true, dur: 1.0, releaseAt: 0.72 } : { bow: true, dur: 0.46, releaseAt: 0.26 };
+  faceTarget();
+}
+const _aim = new THREE.Vector3(), _bowPos = new THREE.Vector3(), _hand = new THREE.Vector3();
+function fireArrow(heavy) {
+  const t = aimTarget();
+  const from = new THREE.Vector3(P.pos.x + Math.sin(P.facing) * 0.7, P.y + 1.55, P.pos.z + Math.cos(P.facing) * 0.7);
+  if (t) _aim.set(t.pos.x, height(t.pos.x, t.pos.z) + t.def.scale * 1.3, t.pos.z).sub(from).normalize();
+  else _aim.set(Math.sin(P.facing), 0.02, Math.cos(P.facing)).normalize();
+  P.facing = Math.atan2(_aim.x, _aim.z);
+  spawnArrow(from, _aim.clone().multiplyScalar(heavy ? 72 : 56), {
+    dmg: atkPower() * (heavy ? 2.4 : 1.0), pierce: heavy, heavy, life: 1.1,
+  });
+  if (heavy) { shake(0.2); spawnImpact(from.x, from.y, from.z, { color: slashColor(), size: 1.2 }); }
+}
+// A flying arrow with a faint glowing streak behind it.
+function spawnArrow(from, vel, opts) {
+  const mesh = makeArrowMesh(0.95, gear().glow);
+  const streak = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, opts.heavy ? 3.2 : 1.8),
+    new THREE.MeshBasicMaterial({ color: slashColor(), transparent: true, opacity: opts.heavy ? 0.9 : 0.5, blending: THREE.AdditiveBlending, depthWrite: false }));
+  streak.position.z = opts.heavy ? -1.2 : -0.6;
+  mesh.add(streak);
+  mesh.position.copy(from);
+  mesh.lookAt(_hand.copy(from).add(vel));
+  scene.add(mesh);
+  projectiles.push({ mesh, pos: mesh.position, vel, life: opts.life ?? 1.2, hostile: false, arrow: true, hit: new Set(), ...opts });
+}
+function arrowHit(pr, e) {
+  const crit = e.parried || Math.random() < 0.15;
+  let dmg = pr.dmg * rand(0.9, 1.1) * (crit ? 1.6 : 1) * (1 + Math.min(0.3, P.comboCount * 0.02));
+  if (gear().effect === 'demonbane' && DEMON_TYPES.has(e.type)) dmg *= 1.5;
+  if (e.enraged) dmg *= 1.25;
+  dmg = Math.round(dmg);
+  const sp = Math.hypot(pr.vel.x, pr.vel.z) || 1;
+  const ey = height(e.pos.x, e.pos.z) + e.def.scale * 1.3;
+  spawnImpact(e.pos.x, ey, e.pos.z, { color: crit ? 0xffe070 : slashColor(), size: pr.heavy ? 2 : 1.2, blood: DEMON_TYPES.has(e.type) ? 0x6a1aa0 : 0xb81010, dx: pr.vel.x / sp, dz: pr.vel.z / sp });
+  damageEnemy(e, dmg, crit, { heavy: !!pr.heavy, finisher: !!pr.heavy }, pr.vel.x / sp, pr.vel.z / sp);
+  applyWeaponEffect(e, dmg);
+  if (!pr.rain) { P.ki = Math.min(100, P.ki + 5); P.comboCount++; P.comboTimer = 2.5; }
+}
+// Rain of Arrows: loose a volley skyward, then it falls over a whole area.
+const rains = [];
+function tryRain() {
+  if (P.dead || ['dodge', 'stunned', 'special', 'whirl'].includes(P.state)) return;
+  if (P.ki < 100) { banner('', 'Ki is not full yet. Land hits and parries to fill it.', 1.3); return; }
+  P.ki = 0;
+  const t = aimTarget(45);
+  const cx = t ? t.pos.x : P.pos.x + Math.sin(P.facing) * 14, cz = t ? t.pos.z : P.pos.z + Math.cos(P.facing) * 14;
+  if (t) P.facing = Math.atan2(cx - P.pos.x, cz - P.pos.z);
+  P.state = 'attack'; P.stateT = 0; P.queued = false; P.combatT = 0;
+  P.atk = { bow: true, cast: true, heavy: true, dur: 0.8, releaseAt: 0.45, cx, cz };
+  floatText(headPos(), 'RAIN OF ARROWS', 'crit', 1.4);
+}
+function startRain(cx, cz) {
+  spawnRing(cx, cz, 7.5, 2.2, 0xffd860);
+  for (let k = 0; k < 8; k++) {
+    const from = new THREE.Vector3(P.pos.x, P.y + 1.8, P.pos.z);
+    spawnArrow(from, new THREE.Vector3(rand(-4, 4), 60, rand(-4, 4)), { dmg: 0, life: 0.5, sky: true });
+  }
+  rains.push({ cx, cz, t: -0.55, next: 0 });
+}
+function updateRains(dt) {
+  for (let i = rains.length - 1; i >= 0; i--) {
+    const r = rains[i];
+    r.t += dt;
+    if (r.t < 0) continue;
+    r.next -= dt;
+    while (r.next <= 0 && r.t < 1.7) {
+      r.next += 0.035;
+      const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * 7.5;
+      const x = r.cx + Math.cos(a) * d, z = r.cz + Math.sin(a) * d;
+      const from = new THREE.Vector3(x + rand(-3, 3), height(x, z) + 26, z + rand(-3, 3));
+      const vel = new THREE.Vector3(x, height(x, z), z).sub(from).normalize().multiplyScalar(60);
+      spawnArrow(from, vel, { dmg: atkPower() * 1.1, rain: true, life: 0.8 });
+    }
+    if (r.t >= 1.7) rains.splice(i, 1);
+  }
+}
+
+// ============================================================ One-handed: Whirlwind Dance
+function tryWhirl() {
+  if (P.dead || ['dodge', 'stunned', 'special', 'whirl'].includes(P.state)) return;
+  if (P.ki < 100) { banner('', 'Ki is not full yet. Land hits and parries to fill it.', 1.3); return; }
+  P.ki = 0;
+  unsheath();
+  P.state = 'whirl'; P.stateT = 0; P.invul = 1.9; P.combatT = 0; P.blocking = false;
+  P.whirlNext = 0;
+  floatText(headPos(), 'WHIRLWIND DANCE', 'crit', 1.4);
+}
+function whirlHits(mult, radius, heavy) {
+  for (const e of enemies) {
+    if (!e.alive || e.evadeT > 0) continue;
+    const dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z, d = Math.hypot(dx, dz);
+    if (d > radius + e.def.radius) continue;
+    const { dmg, crit } = hitDamage(e, { mult });
+    const ey = height(e.pos.x, e.pos.z) + e.def.scale * 1.3;
+    spawnImpact(e.pos.x - dx / (d || 1) * 0.4, ey, e.pos.z - dz / (d || 1) * 0.4, { color: crit ? 0xffe070 : slashColor(), size: heavy ? 2.4 : 1.2, blood: DEMON_TYPES.has(e.type) ? 0x6a1aa0 : 0xb81010, dx: dx / (d || 1), dz: dz / (d || 1) });
+    damageEnemy(e, dmg, crit, { heavy, finisher: true }, dx / (d || 1), dz / (d || 1));
+    applyWeaponEffect(e, dmg);
+  }
+}
+
 function tryJump() {
   if (['dodge', 'attack', 'stunned', 'spirit', 'special'].includes(P.state)) return;
   if (P.y - height(P.pos.x, P.pos.z) < 0.2) { P.vy = 9.5; P.grounded = false; }
 }
 function tryDodge() {
-  if (['dodge', 'stunned', 'spirit', 'special'].includes(P.state) || P.st < 15) return;
+  if (['dodge', 'stunned', 'spirit', 'special', 'whirl'].includes(P.state) || P.st < 13) return;
   if (P.state === 'attack' && P.stateT < P.atk.hitAt) return;
   const d = inputDir();
   if (d.len > 0) P.dodgeDir.set(d.x, 0, d.z);
   else P.dodgeDir.set(-Math.sin(P.facing), 0, -Math.cos(P.facing));
   P.facing = Math.atan2(P.dodgeDir.x, P.dodgeDir.z);
-  P.st -= 20; P.stDelay = 0.8;
+  P.st -= P.style === 'one' ? 13 : 20; P.stDelay = 0.8;
   P.state = 'dodge'; P.stateT = 0; P.invul = 0.34; P.blocking = false;
   burst(P.pos.x, P.y + 0.2, P.pos.z, 8, 0x8a7a5a, 2, 1, 0.5, 4);
 }
@@ -621,7 +798,7 @@ function hitDamage(e, A) {
   const crit = e.parried || Math.random() < 0.12;
   let dmg = atkPower() * A.mult * rand(0.9, 1.1) * (crit ? 1.6 : 1);
   dmg *= 1 + Math.min(0.3, P.comboCount * 0.02);
-  if (W().effect === 'demonbane' && DEMON_TYPES.has(e.type)) dmg *= 1.5;
+  if (gear().effect === 'demonbane' && DEMON_TYPES.has(e.type)) dmg *= 1.5;
   if (e.enraged) dmg *= 1.25;
   e.parried = false;
   return { dmg: Math.round(dmg), crit };
@@ -665,7 +842,7 @@ function doPlayerHit(A) {
   }
 }
 function applyWeaponEffect(e, dmg) {
-  const fxType = W().effect;
+  const fxType = gear().effect;
   if (!fxType || !e.alive) return;
   const y = height(e.pos.x, e.pos.z) + e.def.scale * 1.4;
   if (fxType === 'burn') { e.burnT = 3; e.burnDmg = Math.max(2, Math.round(dmg * 0.12)); burst(e.pos.x, y, e.pos.z, 10, 0xff7a1a, 2, 4, 0.6, -2); }
@@ -677,7 +854,7 @@ function applyWeaponEffect(e, dmg) {
       if (o === e || !o.alive || chained >= 2) continue;
       if (Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z) > 7) continue;
       const a = new THREE.Vector3(e.pos.x, y, e.pos.z), b = new THREE.Vector3(o.pos.x, height(o.pos.x, o.pos.z) + o.def.scale * 1.4, o.pos.z);
-      spawnBolt(a, b, W().glow || 0xfff6a0);
+      spawnBolt(a, b, gear().glow || 0xfff6a0);
       damageEnemy(o, Math.round(dmg * 0.35), false, COMBO[0], 0, 0);
       chained++;
     }
@@ -805,7 +982,7 @@ function updatePlayer(dt) {
   let speedFrac = 0;
   let swinging = false;
   P.blocking = !!keys.KeyQ && P.state === 'idle' && P.st > 0;
-  if (P.blocking) { P.combatT = 0; unsheath(); }
+  if (P.blocking) { P.combatT = 0; if (!isArcher()) unsheath(); }
   P.combatT += dt;
 
   if (P.state === 'dodge') {
@@ -820,6 +997,46 @@ function updatePlayer(dt) {
     rig.body.rotation.x = lerp(rig.body.rotation.x, -0.35, 0.2);
     if (Math.random() < 0.3) burst(P.pos.x, P.y + 2.6, P.pos.z, 1, 0xffe060, 1, 1, 0.4, 0);
     if (P.stateT > 0.9) P.state = 'idle';
+  } else if (P.state === 'attack' && P.atk.bow) {
+    // Draw, aim and loose. Archers can walk slowly while drawing.
+    const A = P.atk;
+    P.pos.x += dir.x * 2.8 * dt; P.pos.z += dir.z * 2.8 * dt;
+    if (!A.cast) { const t = aimTarget(); if (t) P.facing = angleLerp(P.facing, Math.atan2(t.pos.x - P.pos.x, t.pos.z - P.pos.z), 0.3); }
+    const k = smooth(0, A.releaseAt, P.stateT);
+    const released = P.stateT >= A.releaseAt;
+    if (released && !P.hitDone) {
+      P.hitDone = true;
+      if (A.cast) startRain(A.cx, A.cz); else fireArrow(A.heavy);
+    }
+    poseBow(A.cast ? -2.5 : -1.5, released ? 0 : k);
+    speedFrac = dir.len > 0 ? 0.4 : 0;
+    if (P.stateT >= A.dur) {
+      P.hitDone = false;
+      if (P.queued) { P.state = 'idle'; tryShoot(false); }
+      else P.state = 'idle';
+    }
+  } else if (P.state === 'whirl') {
+    // A storm of spinning cuts around the swordsman.
+    P.pos.x += dir.x * 4 * dt; P.pos.z += dir.z * 4 * dt;
+    P.facing += dt * 22;
+    rig.armR.rotation.set(-1.55, -0.6, 0);
+    rig.weapon.rotation.x = -0.1;
+    rig.armL.rotation.set(-1.2, 0.8, 0);
+    rig.body.rotation.x = 0.1;
+    swinging = true;
+    P.whirlNext -= dt;
+    if (P.whirlNext <= 0 && P.stateT < 1.5) {
+      P.whirlNext = 0.12;
+      whirlHits(0.7, 4.8, false);
+      spawnSwing({ follow: playerFollow, plane: rand(-0.35, 0.35), dir: -1, color: slashColor(), radius: 4.2, arc: 4.2, sweep: 2, life: 0.18, intensity: 0.9 });
+    }
+    if (P.stateT >= 1.5 && !P.hitDone) {
+      P.hitDone = true;
+      whirlHits(2.2, 5.6, true);
+      spawnSwing({ follow: playerFollow, plane: 0.05, dir: -1, color: 0xffffff, radius: 5.6, arc: 6, sweep: 2.4, life: 0.35, intensity: 1.5 });
+      shake(0.6); hitstop = 0.1; fovKick = 5;
+    }
+    if (P.stateT >= 1.75) { P.state = 'idle'; P.hitDone = false; }
   } else if (P.state === 'attack' || P.state === 'spirit') {
     const A = P.atk;
     if (P.state === 'spirit' && P.stateT < A.hitAt) {
@@ -842,7 +1059,7 @@ function updatePlayer(dt) {
     poseAttack(rig, A.anim, P.stateT, A);
     swinging = P.stateT > A.hitAt - 0.12 && P.stateT < A.hitAt + 0.1;
     if (P.stateT >= A.dur) {
-      if (P.state === 'attack' && P.queued && P.combo < 2) startAttack(COMBO[P.combo + 1], P.combo + 1);
+      if (P.state === 'attack' && P.queued && P.combo < comboList().length - 1) startAttack(comboList()[P.combo + 1], P.combo + 1);
       else { P.state = 'idle'; P.combo = 0; }
     }
   } else {
@@ -858,7 +1075,8 @@ function updatePlayer(dt) {
     if (P.blocking) poseBlock(rig, 0.35);
     else restArm(rig);
     // Out of combat for a while: slide the sword back into its scabbard.
-    if (!P.sheathed && !P.blocking && P.sheathT === 0 && P.combatT > 5 && !enemies.some(e => e.alive && !['idle', 'return', 'dead'].includes(e.state) && distTo(e) < 25)) P.sheathT = 0.0001;
+    if (isArcher()) poseBow(-0.45, 0);
+    else if (!P.sheathed && !P.blocking && P.sheathT === 0 && P.combatT > 5 && !enemies.some(e => e.alive && !['idle', 'return', 'dead'].includes(e.state) && distTo(e) < 25)) P.sheathT = 0.0001;
     if (P.sheathT > 0) {
       P.sheathT += dt;
       const k = smooth(0, 0.4, P.sheathT);
@@ -886,8 +1104,14 @@ function updatePlayer(dt) {
 
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
   rig.root.rotation.y = P.facing;
-  if (P.state !== 'dodge' && P.state !== 'attack' && P.state !== 'spirit') animateWalk(rig, dt, P.grounded ? speedFrac : 0);
-  if (P.sheathed && P.state !== 'dodge') handOnHilt(rig);
+  if (P.state !== 'dodge' && P.state !== 'attack' && P.state !== 'spirit' && P.state !== 'whirl') animateWalk(rig, dt, P.grounded ? speedFrac : 0);
+  else if (P.state === 'attack' && P.atk.bow) {
+    animateWalk(rig, dt, P.grounded ? speedFrac : 0);
+    rig.armL.rotation.set(P.atk.cast ? -2.5 : -1.5, 0.15, 0); // keep the bow arm on target while walking
+  }
+  if (isArcher() && P.state === 'idle') { rig.armL.rotation.set(-0.45, 0.15, 0); }
+  if (isArcher()) { /* bow pose is set above */ }
+  else if (P.sheathed && P.state !== 'dodge') handOnHilt(rig);
   else if (P.state !== 'dodge') twoHandGrip(rig);
   if (!P.grounded && P.state === 'idle') { rig.legL.rotation.x = -0.5; rig.legR.rotation.x = 0.3; }
   rig.root.visible = !(P.hitInvul > 0.2 && Math.floor(P.hitInvul * 20) % 2 === 0);
@@ -897,7 +1121,7 @@ function updatePlayer(dt) {
   const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined) ?? rig.weapon;
   _base.set(0, -0.3, 0); _tip.set(0, blade.userData.tipY ?? -1.5, 0);
   blade.localToWorld(_base); blade.localToWorld(_tip);
-  updateTrail(_base, _tip, swinging, slashColor(), dt);
+  updateTrail(_base, _tip, swinging && !isArcher(), slashColor(), dt);
 }
 
 // ============================================================ Projectiles (shurikens)
@@ -928,8 +1152,17 @@ function updateProjectiles(dt) {
     pr.life -= dt;
     _prev.copy(pr.pos);
     pr.pos.addScaledVector(pr.vel, dt);
-    pr.mesh.rotation.y += 25 * dt;
-    let remove = pr.life <= 0 || pr.pos.y < height(pr.pos.x, pr.pos.z);
+    if (!pr.arrow) pr.mesh.rotation.y += 25 * dt;
+    const groundHit = pr.pos.y < height(pr.pos.x, pr.pos.z);
+    let remove = pr.life <= 0 || groundHit;
+    if (pr.sky) { if (remove) { scene.remove(pr.mesh); projectiles.splice(i, 1); } continue; }
+    if (pr.rain && groundHit) {
+      // Rain arrows strike everything close to where they land.
+      for (const e of enemies) {
+        if (e.alive && !pr.hit.has(e) && Math.hypot(e.pos.x - pr.pos.x, e.pos.z - pr.pos.z) < e.def.radius + 1.3) { pr.hit.add(e); arrowHit(pr, e); }
+      }
+      burst(pr.pos.x, pr.pos.y + 0.1, pr.pos.z, 3, 0x9a8a6a, 2, 1.5, 0.4, 8);
+    }
     if (!remove && pr.hostile) {
       // Swept test so fast shurikens can't skip past the player between frames.
       const d = segDist(P.pos.x, P.pos.z, _prev.x, _prev.z, pr.pos.x, pr.pos.z);
@@ -950,7 +1183,14 @@ function updateProjectiles(dt) {
       for (const e of enemies) {
         if (!e.alive) continue;
         const ey = height(e.pos.x, e.pos.z);
+        if (pr.arrow && pr.hit.has(e)) continue;
         if (segDist(e.pos.x, e.pos.z, _prev.x, _prev.z, pr.pos.x, pr.pos.z) < e.def.radius + 0.5 && pr.pos.y > ey && pr.pos.y < ey + e.def.scale * 2.4) {
+          if (pr.arrow) {
+            pr.hit.add(e);
+            arrowHit(pr, e);
+            if (!pr.pierce) { remove = true; break; }
+            continue;
+          }
           damageEnemy(e, Math.round(atkPower() * 0.9), true, COMBO[2], pr.vel.x / 30, pr.vel.z / 30);
           remove = true;
           break;
@@ -1515,7 +1755,7 @@ function updateHUD() {
   hud.gold.textContent = P.gold;
   hud.pots.textContent = P.potions;
   hud.elx.textContent = P.elixirs;
-  hud.gear.textContent = `${W().name} (atk ${atkPower()}) · ${ARMORS[P.armor].name} (def ${defense()}) · Kills ${P.kills}`;
+  hud.gear.textContent = `${STYLES[P.style].name} · ${gear().name} (atk ${atkPower()}) · ${ARMORS[P.armor].name} (def ${defense()}) · Kills ${P.kills}`;
   const show = engaged && engaged.alive;
   hud.bossbar.classList.toggle('hidden', !show);
   if (show) { hud.bossName.textContent = engaged.title; hud.bossFill.style.width = (engaged.hp / engaged.maxHp * 100) + '%'; }
@@ -1560,6 +1800,8 @@ modalBox.addEventListener('click', e => {
     case 'buy': buy(arg); break;
     case 'tab': shopTab = arg; openShop(shopTown, shopDef); break;
     case 'equipW': equipWeapon(arg); break;
+    case 'equipB': equipBow(arg); break;
+    case 'style': setStyle(arg); break;
     case 'wear': wearSkin(arg); break;
     case 'rest': rest(); break;
     case 'travel': travel(Number(arg)); break;
@@ -1582,7 +1824,7 @@ const CONTROLS_HTML = `
     <kbd>Left click / J</kbd><span>Slash &mdash; press again for a 3-hit combo</span>
     <kbd>Right click / K</kbd><span>Heavy strike &mdash; breaks a big demon's guard</span>
     <kbd>Q (hold)</kbd><span>Block. Press just before a hit lands to <b>parry</b> and deflect shurikens</span>
-    <kbd>X</kbd><span>Iaijutsu: Thousand Cuts when your Ki bar is full &mdash; flash through every nearby foe</span>
+    <kbd>X</kbd><span>Special move when your Ki bar is full: Thousand Cuts (two-handed), Whirlwind Dance (one-handed) or Rain of Arrows (archer)</span>
     <kbd>Tab</kbd><span>Lock on to an enemy</span>
     <kbd>Space</kbd><span>Jump &mdash; leaps over ground slams</span>
     <kbd>F</kbd><span>Dodge roll (brief invulnerability)</span>
@@ -1654,8 +1896,9 @@ const hex = c => '#' + c.toString(16).padStart(6, '0');
 let shopTown = null, shopDef = null, shopTab = 'swords';
 function openShop(town, shop) {
   shopTown = town; shopDef = shop;
-  const has = { swords: shop.stock.some(id => id.startsWith('w:')), armor: shop.stock.some(id => /^[ac]:/.test(id)), skins: true, supplies: shop.stock.some(id => CONSUMABLES[id]) };
-  const tabs = [['swords', 'Swords'], ['armor', 'Armor & Charms'], ['skins', 'Outfits'], ['supplies', 'Supplies']].filter(([k]) => has[k]);
+  const has = { bows: shop.stock.some(id => id.startsWith('b:')), swords: shop.stock.some(id => id.startsWith('w:')), armor: shop.stock.some(id => /^[ac]:/.test(id)), skins: true, supplies: shop.stock.some(id => CONSUMABLES[id]) };
+  const order = isArcher() ? [['bows', 'Bows'], ['swords', 'Swords']] : [['swords', 'Swords'], ['bows', 'Bows']];
+  const tabs = [...order, ['armor', 'Armor & Charms'], ['skins', 'Outfits'], ['supplies', 'Supplies']].filter(([k]) => has[k]);
   if (!has[shopTab]) shopTab = tabs[0][0];
   let rows = '';
   if (shopTab === 'swords') {
@@ -1669,6 +1912,17 @@ function openShop(town, shop) {
       return itemRow(swatch + w.name, `${weaponLine(w)}<br>${w.desc}`, owned ? '<div class="price">Owned</div>' : priceTag(w.price), btn);
     }).join('');
     rows += `<p class="sub">Your sword: <b>${W().name}</b> (${weaponLine(W())}). Swap anytime with I.</p>`;
+  } else if (shopTab === 'bows') {
+    rows = shop.stock.filter(id => id.startsWith('b:')).map(id => {
+      const key = id.slice(2), b = BOWS[key];
+      const owned = P.ownedBows.includes(key);
+      const btn = owned
+        ? `<button class="secondary" data-act="equipB|${key}" ${P.bow === key ? 'disabled' : ''}>${P.bow === key ? 'Equipped' : 'Equip'}</button>`
+        : buyBtn(id, b.price);
+      const swatch = `<span class="swatch blade" style="background:linear-gradient(90deg,${hex(b.color)},${hex(b.glow || b.color)})"></span>`;
+      return itemRow(swatch + b.name, `${weaponLine(b)}<br>${b.desc}`, owned ? '<div class="price">Owned</div>' : priceTag(b.price), btn);
+    }).join('');
+    rows += `<p class="sub">${isArcher() ? `Your bow: <b>${B().name}</b>.` : 'Bows are used by the Archer style. Change style from the inventory (I).'}</p>`;
   } else if (shopTab === 'armor') {
     rows = shop.stock.filter(id => id.startsWith('a:') || id.startsWith('c:')).map(id => {
       const [kind, key] = id.split(':');
@@ -1707,7 +1961,7 @@ function openShop(town, shop) {
 function priceOf(id) {
   if (CONSUMABLES[id]) return CONSUMABLES[id].price;
   const [kind, key] = id.split(':');
-  return { w: WEAPONS, a: ARMORS, c: CHARMS, s: SKINS }[kind][key].price;
+  return { w: WEAPONS, a: ARMORS, c: CHARMS, s: SKINS, b: BOWS }[kind][key].price;
 }
 function buy(id) {
   const price = priceOf(id);
@@ -1718,6 +1972,7 @@ function buy(id) {
   else {
     const [kind, key] = id.split(':');
     if (kind === 'w') { P.ownedWeapons.push(key); P.weapon = key; }
+    else if (kind === 'b') { P.ownedBows.push(key); P.bow = key; }
     else if (kind === 'a') P.armor = key;
     else if (kind === 's') { P.ownedSkins.push(key); P.skin = key; }
     else { P.charms.push(key); if (key === 'vitality') P.hp += 50; }
@@ -1729,6 +1984,13 @@ function buy(id) {
 function equipWeapon(key) {
   if (!P.ownedWeapons.includes(key)) return;
   P.weapon = key;
+  rebuildPlayerRig();
+  save();
+  if (ui === 'shop') openShop(shopTown, shopDef); else openInventory();
+}
+function equipBow(key) {
+  if (!P.ownedBows.includes(key)) return;
+  P.bow = key;
   rebuildPlayerRig();
   save();
   if (ui === 'shop') openShop(shopTown, shopDef); else openInventory();
@@ -1750,13 +2012,22 @@ function openInventory() {
     const s = SKINS[key];
     return itemRow(s.name, s.desc, '', `<button class="secondary" data-act="wear|${key}" ${P.skin === key ? 'disabled' : ''}>${P.skin === key ? 'Wearing' : 'Wear'}</button>`);
   }).join('');
+  const bows = P.ownedBows.map(key => {
+    const b = BOWS[key];
+    return itemRow(b.name, `${weaponLine(b)}<br>${b.desc}`, '',
+      `<button class="secondary" data-act="equipB|${key}" ${P.bow === key ? 'disabled' : ''}>${P.bow === key ? 'Equipped' : 'Equip'}</button>`);
+  }).join('');
   const charms = P.charms.length ? P.charms.map(c => CHARMS[c].name).join(', ') : 'none';
   const html = `<h2>Inventory</h2>
+    <p class="sub">Fighting style: <b>${STYLES[P.style].name}</b> &mdash; change it under Customize appearance.</p>`;
+  const html2 = `
     <p class="sub">${ARMORS[P.armor].name} (def ${defense()}) &middot; Charms: ${charms} &middot; Potions ${P.potions} &middot; Elixirs ${P.elixirs}</p>
-    <h3>Swords</h3><div class="items">${swords}</div>
+    ${isArcher() ? `<h3>Bows</h3><div class="items">${bows}</div><h3>Swords</h3>` : `<h3>Swords</h3>`}<div class="items">${swords}</div>
+    ${isArcher() ? '' : `<h3>Bows</h3><div class="items">${bows}</div>`}
     <h3>Outfits</h3><div class="items">${skins}</div>
     <div class="btns"><button data-act="creator">Customize appearance</button><button class="secondary" data-act="close">Close (I)</button></div>`;
-  if (ui === 'inventory') modalBox.innerHTML = html; else openModal(html, 'inventory');
+  const full = html + html2;
+  if (ui === 'inventory') modalBox.innerHTML = full; else openModal(full, 'inventory');
 }
 
 function openShrine(town) {
@@ -1864,13 +2135,23 @@ function renderCreator() {
   const row = (key, label) => `<div class="crow"><div class="clabel">${label}</div><div class="swatches">${LOOK_OPTIONS[key].map(c =>
     `<button class="sw ${L[key] === c ? 'on' : ''}" style="background:${hex(c)}" data-act="look|${key}:${c}" aria-label="${label} ${hex(c)}"></button>`).join('')}</div></div>`;
   const hats = LOOK_OPTIONS.hat.map(h => `<button class="hatbtn ${L.hat === h ? 'on' : ''}" data-act="look|hat:${h}">${HAT_NAMES[h]}</button>`).join('');
+  const styles = Object.entries(STYLES).map(([k, st]) => `<button class="stylecard ${P.style === k ? 'on' : ''}" data-act="style|${k}"><b>${st.name}</b><span>${st.desc}</span><em>Special: ${st.special}</em></button>`).join('');
   const html = `<h2>Your samurai</h2>
+    <div class="styles">${styles}</div>
     <p class="sub">Skin and hair apply to every outfit. Robe, hakama, scarf and headwear make up <b>Your Own Style</b>, which you can wear anytime from the inventory (I).</p>
     ${row('skin', 'Skin')}${row('hair', 'Hair')}${row('cloth', 'Robe')}${row('cloth2', 'Hakama')}${row('scarf', 'Scarf')}
     <div class="crow"><div class="clabel">Headwear</div><div class="hats">${hats}</div></div>
     <div class="btns"><button data-act="creatorDone">${creatorFromStart ? 'Begin the journey' : 'Done'}</button></div>`;
   if (ui === 'creator') modalBox.innerHTML = html;
   else { openModal(html, 'creator'); modal.classList.add('side'); }
+}
+function setStyle(key) {
+  if (!STYLES[key]) return;
+  P.style = key;
+  P.sheathed = key !== 'archer';
+  P.state = 'idle';
+  rebuildPlayerRig();
+  if (ui === 'creator') renderCreator();
 }
 function setLook(arg) {
   const [k, v] = arg.split(':');
@@ -2093,6 +2374,7 @@ function save() {
       lvl: P.lvl, xp: P.xp, gold: P.gold, potions: P.potions, elixirs: P.elixirs, weapon: P.weapon, armor: P.armor,
       charms: P.charms, discovered: P.discovered, lastTown: P.lastTown, bossDead: P.bossDead, kills: P.kills,
       ownedWeapons: P.ownedWeapons, skin: P.skin, ownedSkins: P.ownedSkins, look: P.look,
+      style: P.style, bow: P.bow, ownedBows: P.ownedBows,
       mastersDead: P.mastersDead, warlordsDead: P.warlordsDead, chestsLooted: P.chestsLooted,
     }));
   } catch { /* storage unavailable: play on without saving */ }
@@ -2112,6 +2394,9 @@ function loadSave() {
     s.ownedWeapons = [...new Set(['worn', s.weapon, ...(s.ownedWeapons ?? [])])].filter(k => WEAPONS[k]);
     s.ownedSkins = [...new Set(['ronin', 'custom', ...(s.ownedSkins ?? [])])].filter(k => SKINS[k]);
     s.look = { ...DEFAULT_LOOK, ...(s.look ?? {}) };
+    if (!STYLES[s.style]) s.style = 'two';
+    s.ownedBows = [...new Set(['hankyu', ...(s.ownedBows ?? [])])].filter(k => BOWS[k]);
+    if (!BOWS[s.bow]) s.bow = 'hankyu';
     if (!SKINS[s.skin]) s.skin = 'ronin';
     return s;
   } catch { return null; }
@@ -2128,10 +2413,11 @@ function startGame(s) {
   Object.assign(P, {
     lvl: 1, xp: 0, gold: 0, potions: 2, elixirs: 0, weapon: 'worn', armor: 'cloth', charms: [],
     discovered: [0], lastTown: 0, bossDead: false, kills: 0, ownedWeapons: ['worn'], skin: 'ronin', ownedSkins: ['ronin', 'custom'],
-    look: { ...DEFAULT_LOOK },
+    look: { ...DEFAULT_LOOK }, style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
     mastersDead: [], warlordsDead: [], chestsLooted: [],
   }, s ?? {});
-  for (const k of ['charms', 'discovered', 'ownedWeapons', 'ownedSkins', 'mastersDead', 'warlordsDead', 'chestsLooted']) P[k] = [...P[k]];
+  for (const k of ['charms', 'discovered', 'ownedWeapons', 'ownedSkins', 'mastersDead', 'warlordsDead', 'chestsLooted', 'ownedBows']) P[k] = [...P[k]];
+  P.sheathed = P.style !== 'archer';
   P.look = { ...P.look };
   P.dead = false; P.state = 'idle'; P.hp = maxHp(); P.st = maxSt(); P.ki = 0;
   if (P.bossDead && boss.alive) markDead(boss);
@@ -2185,6 +2471,7 @@ function frame() {
       updateEnemies(dt, playerSafe);
       updateProjectiles(dt);
     }
+    updateRains(dt);
     updateNPCs(dt);
     updatePortals(dt);
     updateEffects(dt);

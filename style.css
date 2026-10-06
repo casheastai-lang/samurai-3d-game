@@ -208,3 +208,12 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
 }
 
 #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+
+/* ---------- Fighting style cards (character creator) ---------- */
+.styles { display: grid; grid-template-columns: 1fr; gap: 8px; margin: 10px 0 6px; }
+.stylecard { text-align: left; background: #2a2420; border-color: var(--edge); padding: 9px 12px; }
+.stylecard b { display: block; font-size: 15px; }
+.stylecard span { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+.stylecard em { display: block; font-size: 12px; font-style: normal; color: var(--gold); margin-top: 3px; }
+.stylecard.on { background: #6e1d16; border-color: #c0392b; }
+.stylecard.on span { color: #f0dcd0; }

@@ -56,6 +56,18 @@ Each region has a walled ninja base off the road. Ninjas are fast, dodge your at
 Defeat the base's **ninja master** to break the seal on its portal. The portal leads to a **demon fortress** on a lava island.
 Each fortress has a warlord who guards a chest. The chests hold four swords you can't buy: Shadowfang, Blood Moon, Celestial Blade and Yamata Dragonblade.
 
+### Fighting styles
+
+Pick a style in the character creator (change it anytime from the inventory, I):
+
+| Style | Fighting | Special (X, full Ki) |
+| --- | --- | --- |
+| Two-Handed Samurai | Katana in both hands, heavier cuts, quick-draw from the scabbard | **Thousand Cuts**: flash through up to 8 foes, every cut lands on the sheathing click |
+| One-Handed Swordsman | Sword in one hand: 4-hit combos, faster swings, cheaper dodges, lighter blows | **Whirlwind Dance**: a storm of spinning slashes around you, ending in a big finisher |
+| Archer | Yumi bow. Click to shoot (auto-aims at the enemy you face), right-click for a piercing power shot | **Rain of Arrows**: a volley falls over a whole area |
+
+Archers buy bows in town shops: Bamboo Yumi, Lacquered Yumi, Shigeto-yumi (frost), Raiden Bow (shock) and Hamaya (demonbane, Kurogane only).
+
 ### Your samurai and the bosses
 
 A new journey opens the character creator: skin tone, hair, robe, hakama, scarf and headwear. Open it again anytime from the inventory (I).
