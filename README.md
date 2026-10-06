@@ -20,10 +20,10 @@ so no install or internet connection is needed.
 | --- | --- |
 | W A S D | Move (relative to the camera) |
 | Mouse | Look around (click the game first). Wheel zooms |
-| Left click / J | Slash. Keep pressing for a 3-hit combo |
+| Left click / J | Slash. Keep pressing for a 3-hit combo. From the scabbard, the first cut is a fast quick-draw (iai) that hits harder |
 | Right click / K | Heavy strike: breaks the guard of big demons |
 | Q (hold) | Block. Press it just before a hit lands to **parry**: no damage, the enemy is stunned, and shurikens fly back |
-| X | Spirit Slash: a dash and spinning cut, when the Ki bar is full |
+| X | Iaijutsu, Thousand Cuts (full Ki): time stops, you flash through up to 8 nearby foes, then sheathe your sword and every cut lands at once |
 | Tab | Lock on to an enemy |
 | Space | Jump. Also clears ground slams |
 | F | Dodge roll (brief invulnerability) |
@@ -63,6 +63,7 @@ Before each boss fight (ninja masters, demon warlords and the Demon King) the bo
 
 - **Towns are safe.** Demons won't follow you inside.
 - **Shrines** heal you, save your progress, set your respawn point, and let you fast-travel to any town you've found.
+- **Your katana rests in its scabbard** when you're not fighting. Attacking or blocking draws it; after a few calm seconds you sheathe it again.
 - **Combos** add up to +30% damage. Landing hits, parrying and deflecting fill your Ki.
 - **Dying** sends you back to your last shrine and costs 30% of your gold.
 - **The Demon King** charges and slams the ground; neither can be blocked, so jump or roll. At half health he becomes enraged and calls in more oni.

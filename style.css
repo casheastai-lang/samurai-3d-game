@@ -206,3 +206,5 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
   #modal.side { justify-content: center; align-items: flex-end; }
   #modal.side #modalBox { margin: 0 0 16px; max-height: 60vh; }
 }
+
+#flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; }

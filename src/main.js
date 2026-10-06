@@ -9,7 +9,7 @@ import {
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
   NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK,
 } from './data.js';
-import { makeHumanoid, makeEnemyModel, makeShuriken, setLod } from './models.js';
+import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
   buildWorld, updateSky, updateChunks, setGrassEnabled, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
@@ -17,7 +17,7 @@ import {
 } from './world.js';
 import {
   initFx, burst, updateParticles, spawnRing, updateEffects, floatText, updateFloaters,
-  updateTrail, spawnBolt, updateAmbient, spawnSwing, spawnImpact,
+  updateTrail, spawnBolt, updateAmbient, spawnSwing, spawnImpact, spawnSlashLine,
 } from './fx.js';
 
 // ============================================================ Renderer, scene, post-processing
@@ -162,8 +162,23 @@ function restArm(rig, k = 0.2) {
 }
 // Left hand reaches for the katana handle, so the sword is held two-handed.
 const _grip = new THREE.Vector3(), _sh = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+// While sheathed, the sword hand rests on the handle at the hip.
+function handOnHilt(rig) {
+  if (!rig.sheathedHilt) return;
+  rig.root.updateMatrixWorld(true);
+  rig.sheathedHilt.localToWorld(_grip.set(0, 0.06, 0));
+  rig.body.worldToLocal(_grip);
+  _sh.copy(rig.armR.position);
+  _grip.sub(_sh);
+  const len = _grip.length();
+  _grip.normalize();
+  rig.armR.quaternion.setFromUnitVectors(_down, _grip);
+  // A bent elbow can't be modelled with one bone, so pull the shoulder in a little instead.
+  rig.armR.position.y = 0.82 - Math.max(0, 0.68 - len) * 0.3;
+}
 function twoHandGrip(rig) {
   if (!rig.twoHanded) return;
+  rig.armR.position.y = 0.82;
   const blade = rig.weapon.children.find(c => c.userData.tipY !== undefined);
   if (!blade) return;
   rig.root.updateMatrixWorld(true);
@@ -183,7 +198,8 @@ function poseAttack(rig, anim, t, A) {
   const s = smooth(A.hitAt - 0.09, A.hitAt + 0.05, t);
   const arm = rig.armR, body = rig.body;
   const w = rig.weapon.rotation;
-  if (anim === 'slashA') { arm.rotation.set(-1.45, lerp(1.4, -1.5, s), 0); body.rotation.y = lerp(0.45, -0.5, s); w.x = lerp(-1.1, -0.15, s); }
+  if (anim === 'draw') { arm.rotation.set(lerp(-0.55, -1.5, s), lerp(-1.25, 1.45, s), 0); body.rotation.y = lerp(-0.6, 0.55, s); w.x = lerp(-1.4, -0.1, s); }
+  else if (anim === 'slashA') { arm.rotation.set(-1.45, lerp(1.4, -1.5, s), 0); body.rotation.y = lerp(0.45, -0.5, s); w.x = lerp(-1.1, -0.15, s); }
   else if (anim === 'slashB') { arm.rotation.set(-1.45, lerp(-1.5, 1.4, s), 0); body.rotation.y = lerp(-0.5, 0.45, s); w.x = lerp(-1.1, -0.15, s); }
   else if (anim === 'spin') { arm.rotation.set(-1.5, -1.2, 0); body.rotation.y = lerp(0, -Math.PI * 2, s); w.x = -0.1; }
   else { arm.rotation.set(lerp(-3.0, -0.5, s), 0, 0); body.rotation.x = lerp(-0.18, 0.25, s); w.x = lerp(-0.7, -0.2, s); }
@@ -214,6 +230,8 @@ const COMBO = [
 ];
 const HEAVY = { anim: 'heavy', dur: 0.85, hitAt: 0.45, mult: 2.4, range: 3.9, dot: -0.25, cost: 26, lunge: 6, arc: 'wide', heavy: true };
 const SPIRIT = { anim: 'spin', dur: 0.62, hitAt: 0.26, mult: 3.6, range: 6.5, dot: -2, cost: 0, lunge: 0, arc: 'wide', heavy: true, spirit: true };
+// Iai: the first cut comes straight out of the scabbard as a fast rising slash.
+const DRAW = { anim: 'draw', dur: 0.4, hitAt: 0.1, mult: 1.6, range: 3.3, dot: 0.0, cost: 6, lunge: 8, arc: 'h', finisher: true };
 const DODGE_TIME = 0.45;
 const PARRY_WINDOW = 0.25;
 
@@ -226,6 +244,7 @@ const P = {
   state: 'idle', stateT: 0, atk: null, combo: 0, queued: false, hitDone: false,
   invul: 0, hitInvul: 0, stDelay: 0, dead: false, dodgeDir: new THREE.Vector3(),
   blocking: false, blockPressT: -10, comboCount: 0, comboTimer: 0, lock: null,
+  sheathed: true, combatT: 0, sheathT: 0,
 };
 const hasCharm = c => P.charms.includes(c);
 const W = () => WEAPONS[P.weapon];
@@ -242,12 +261,13 @@ function rebuildPlayerRig() {
     ? { cloth: L.cloth, cloth2: L.cloth2, hat: L.hat === 'none' ? null : L.hat, scarf: L.scarf }
     : SKINS[P.skin];
   rig = makeHumanoid({
-    cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf, weapon: 'katana',
+    cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf, weapon: 'katana', sheath: true,
     skin: L.skin, hair: L.hair,
     armor: sk.armor ?? ARMOR_COLORS[P.armor],
     blade: { color: w.color, glow: w.glow, len: w.len ?? 1, style: w.style },
   });
   rig.armR.rotation.x = REST_ARM;
+  setSheathed(rig, P.sheathed);
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
   rig.root.rotation.y = P.facing;
   scene.add(rig.root);
@@ -301,7 +321,7 @@ window.addEventListener('keydown', e => {
     case 'Digit1': drink('potion'); break;
     case 'Digit2': case 'KeyR': drink('elixir'); break;
     case 'KeyQ': P.blockPressT = time; break;
-    case 'KeyX': trySpirit(); break;
+    case 'KeyX': tryIai(); break;
     case 'Tab': toggleLock(); break;
     case 'KeyM': toggleMap(); break;
     case 'KeyH': showHelp(); break;
@@ -384,15 +404,31 @@ function faceTarget() {
 }
 
 function tryAttack(heavy) {
-  if (P.dead || ['dodge', 'stunned', 'spirit'].includes(P.state)) return;
+  if (P.dead || ['dodge', 'stunned', 'spirit', 'special'].includes(P.state)) return;
   if (P.state === 'attack') {
     if (!heavy && !P.atk.heavy && P.stateT > P.atk.hitAt * 0.5) P.queued = true;
     return;
   }
   startAttack(heavy ? HEAVY : COMBO[0], 0);
 }
+function unsheath() {
+  if (!P.sheathed) return;
+  P.sheathed = false;
+  P.sheathT = 0;
+  setSheathed(rig, false);
+}
+function sheathNow() {
+  P.sheathed = true;
+  P.sheathT = 0;
+  setSheathed(rig, true);
+}
 function startAttack(base, combo) {
   if (P.st < base.cost * 0.5) { floatText(headPos(), 'Exhausted', 'hurt', 0.7); P.state = 'idle'; return; }
+  P.combatT = 0;
+  if (P.sheathed) {
+    if (!base.heavy) base = DRAW;
+    unsheath();
+  }
   const sp = W().speed ?? 1;
   const A = { ...base, dur: base.dur / sp, hitAt: base.hitAt / sp, range: base.range + (W().reach ?? 0) };
   P.st = Math.max(0, P.st - A.cost);
@@ -419,6 +455,7 @@ const SWINGS = {
   slashB: { plane: -0.18, dir: 1, arc: 2.3, sweep: 1.5, life: 0.22 },
   chop: { plane: 'v', dir: -1, arc: 2.1, sweep: 1.4, life: 0.24, height: 1.4 },
   heavy: { plane: 0.6, dir: -1, arc: 3.4, sweep: 1.9, life: 0.32, intensity: 1.3 },
+  draw: { plane: -0.35, dir: 1, arc: 2.8, sweep: 1.8, life: 0.26, intensity: 1.3, height: 1.1 },
 };
 
 function trySpirit() {
@@ -429,16 +466,137 @@ function trySpirit() {
   const sp = W().speed ?? 1;
   P.atk = { ...SPIRIT, range: SPIRIT.range + (W().reach ?? 0), dur: SPIRIT.dur, hitAt: SPIRIT.hitAt * Math.min(1, 1 / sp) };
   P.state = 'spirit'; P.stateT = 0; P.hitDone = false; P.invul = 0.6; P.blocking = false;
+  unsheath(); P.combatT = 0;
   floatText(headPos(), 'SPIRIT SLASH', 'crit', 1.2);
   burst(P.pos.x, P.y + 1, P.pos.z, 40, slashColor(), 3, 3, 0.6, 2);
 }
 
+// ============================================================ Iaijutsu: Thousand Cuts
+// Time nearly stops. The samurai flashes through every nearby foe, leaving streaks of
+// light, then slowly returns the blade to its scabbard. On the click, every cut lands.
+let special = null;
+function tryIai() {
+  if (P.dead || ['dodge', 'stunned', 'spirit', 'special'].includes(P.state)) return;
+  if (P.ki < 100) { banner('', 'Ki is not full yet. Land hits and parries to fill it.', 1.3); return; }
+  const targets = enemies
+    .filter(e => e.alive && distTo(e) < 16 && Math.abs(height(e.pos.x, e.pos.z) - P.y) < 4)
+    .sort((a, b) => distTo(a) - distTo(b)).slice(0, 8);
+  if (!targets.length) { trySpirit(); return; }
+  P.ki = 0;
+  P.state = 'special'; P.stateT = 0; P.invul = 99; P.blocking = false; P.lock = null; P.combatT = 0;
+  sheathNow();
+  special = { phase: 'ready', t: 0, targets, idx: 0, next: 0, marked: [], clicked: false };
+  floatText(headPos(), 'IAIJUTSU', 'crit', 1.4);
+  canvas.style.filter = 'saturate(0.25) contrast(1.15) brightness(0.85)';
+}
+function screenFlash(strength = 0.85) {
+  const f = $('flash');
+  f.style.transition = 'none';
+  f.style.opacity = String(strength);
+  requestAnimationFrame(() => { f.style.transition = 'opacity 0.6s'; f.style.opacity = '0'; });
+}
+const _from = new THREE.Vector3(), _to = new THREE.Vector3(), _c = new THREE.Vector3(), _d = new THREE.Vector3();
+function updateSpecial(dt) {
+  const S = special;
+  S.t += dt;
+  const R = rig;
+  if (S.phase === 'ready') {
+    // Low stance, hand on the hilt, eyes on the first target.
+    const T = S.targets[0];
+    P.facing = angleLerp(P.facing, Math.atan2(T.pos.x - P.pos.x, T.pos.z - P.pos.z), 0.3);
+    R.body.position.y = lerp(R.body.position.y, 0.82, 0.2);
+    R.legL.rotation.x = lerp(R.legL.rotation.x, -0.75, 0.2);
+    R.legR.rotation.x = lerp(R.legR.rotation.x, 0.65, 0.2);
+    R.body.rotation.x = lerp(R.body.rotation.x, 0.25, 0.2);
+    if (Math.random() < 0.5) burst(P.pos.x, P.y + 0.1, P.pos.z, 2, 0xc8d8ff, 3, 0.4, 0.5, 0);
+    if (S.t > 0.5) { S.phase = 'dash'; S.t = 0; unsheath(); }
+  } else if (S.phase === 'dash') {
+    S.next -= dt;
+    if (S.next <= 0) {
+      S.next = 0.085;
+      if (S.idx >= S.targets.length) { S.phase = 'finish'; S.t = 0; }
+      else {
+        const e = S.targets[S.idx++];
+        if (e.alive) {
+          _from.set(P.pos.x, P.y + 1.2, P.pos.z);
+          let dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z;
+          const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+          const reach = e.def.radius + 1.8;
+          P.pos.set(e.pos.x + dx * reach, 0, e.pos.z + dz * reach);
+          collideStatic(P.pos, 0.5);
+          clampBounds(P.pos);
+          P.y = height(P.pos.x, P.pos.z);
+          P.facing = Math.atan2(dx, dz);
+          _to.set(P.pos.x, P.y + 1.2, P.pos.z);
+          spawnSlashLine(_from, _to, { color: slashColor(), width: 0.14, life: 1.1 });
+          // Crossing cuts through the target, left hanging in the air.
+          const ey = height(e.pos.x, e.pos.z) + e.def.scale * 1.3, r = 0.9 + e.def.scale * 0.6;
+          for (let k = 0; k < 2; k++) {
+            const a = Math.random() * Math.PI, b = rand(-0.9, 0.9);
+            _d.set(Math.cos(a) * Math.cos(b), Math.sin(b), Math.sin(a) * Math.cos(b)).multiplyScalar(r);
+            _c.set(e.pos.x, ey, e.pos.z);
+            spawnSlashLine(_c.clone().sub(_d), _c.clone().add(_d), { color: 0xffffff, width: 0.07, life: 1.4 });
+          }
+          spawnImpact(e.pos.x, ey, e.pos.z, { color: slashColor(), size: 2 });
+          e.kb.set(0, 0, 0);
+          S.marked.push(e);
+          shake(0.12);
+        }
+      }
+    }
+    // Blade extended after the cut, body turned through it, deep lunge.
+    R.armR.rotation.set(-1.5, -1.3, 0);
+    R.weapon.rotation.x = -0.1;
+    R.body.rotation.set(0.15, -0.5, 0);
+    R.body.position.y = 0.88;
+    R.legL.rotation.x = -0.8; R.legR.rotation.x = 0.6;
+  } else {
+    // Rise, turn the blade, and slowly slide it home. The click releases every cut.
+    const k = smooth(0.1, 0.85, S.t);
+    R.armR.rotation.set(lerp(-1.5, -0.6, k), lerp(-1.3, -1.2, k), 0);
+    R.weapon.rotation.x = lerp(-0.1, -1.5, k);
+    R.body.rotation.set(lerp(0.15, 0, k), lerp(-0.5, 0, k), 0);
+    R.body.position.y = lerp(0.88, 1.0, k);
+    R.legL.rotation.x = lerp(-0.8, 0, k); R.legR.rotation.x = lerp(0.6, 0, k);
+    if (!S.clicked && S.t > 0.9) {
+      S.clicked = true;
+      sheathNow();
+      canvas.style.filter = '';
+      screenFlash(0.75);
+      shake(0.9); hitstop = 0.12; fovKick = 7;
+      for (const e of S.marked) {
+        if (!e.alive) continue;
+        const { dmg } = hitDamage(e, { mult: 4.2 });
+        const dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z, d = Math.hypot(dx, dz) || 1;
+        const ey = height(e.pos.x, e.pos.z) + e.def.scale * 1.3;
+        spawnImpact(e.pos.x, ey, e.pos.z, { color: 0xffffff, size: 3.2, blood: DEMON_TYPES.has(e.type) ? 0x6a1aa0 : 0xb81010, dx: dx / d, dz: dz / d });
+        damageEnemy(e, dmg, true, SPIRIT, dx / d, dz / d);
+        applyWeaponEffect(e, dmg);
+      }
+      floatText(headPos(), 'THOUSAND CUTS', 'crit', 1.6);
+    }
+    if (S.t > 1.45) {
+      special = null;
+      P.state = 'idle'; P.invul = 0.4;
+      canvas.style.filter = '';
+    }
+  }
+  R.root.position.set(P.pos.x, P.y, P.pos.z);
+  R.root.rotation.y = P.facing;
+  if (P.sheathed) handOnHilt(R);
+  R.root.updateMatrixWorld(true);
+  const blade = R.weapon.children.find(c => c.userData.tipY !== undefined) ?? R.weapon;
+  _base.set(0, -0.3, 0); _tip.set(0, blade.userData.tipY ?? -1.5, 0);
+  blade.localToWorld(_base); blade.localToWorld(_tip);
+  updateTrail(_base, _tip, S.phase === 'dash', slashColor(), dt);
+}
+
 function tryJump() {
-  if (['dodge', 'attack', 'stunned', 'spirit'].includes(P.state)) return;
+  if (['dodge', 'attack', 'stunned', 'spirit', 'special'].includes(P.state)) return;
   if (P.y - height(P.pos.x, P.pos.z) < 0.2) { P.vy = 9.5; P.grounded = false; }
 }
 function tryDodge() {
-  if (['dodge', 'stunned', 'spirit'].includes(P.state) || P.st < 15) return;
+  if (['dodge', 'stunned', 'spirit', 'special'].includes(P.state) || P.st < 15) return;
   if (P.state === 'attack' && P.stateT < P.atk.hitAt) return;
   const d = inputDir();
   if (d.len > 0) P.dodgeDir.set(d.x, 0, d.z);
@@ -552,6 +710,7 @@ function damagePlayer(amount, src, opts = {}) {
     }
   }
   const dmg = Math.max(1, Math.round(amount * rand(0.9, 1.1) - defense()));
+  P.combatT = 0;
   P.hp -= dmg;
   P.hitInvul = 0.5;
   P.comboCount = 0;
@@ -646,6 +805,8 @@ function updatePlayer(dt) {
   let speedFrac = 0;
   let swinging = false;
   P.blocking = !!keys.KeyQ && P.state === 'idle' && P.st > 0;
+  if (P.blocking) { P.combatT = 0; unsheath(); }
+  P.combatT += dt;
 
   if (P.state === 'dodge') {
     const p = P.stateT / DODGE_TIME;
@@ -696,6 +857,19 @@ function updatePlayer(dt) {
     speedFrac = speed / 6.5;
     if (P.blocking) poseBlock(rig, 0.35);
     else restArm(rig);
+    // Out of combat for a while: slide the sword back into its scabbard.
+    if (!P.sheathed && !P.blocking && P.sheathT === 0 && P.combatT > 5 && !enemies.some(e => e.alive && !['idle', 'return', 'dead'].includes(e.state) && distTo(e) < 25)) P.sheathT = 0.0001;
+    if (P.sheathT > 0) {
+      P.sheathT += dt;
+      const k = smooth(0, 0.4, P.sheathT);
+      rig.armR.rotation.x = lerp(rig.armR.rotation.x, -0.6, k * 0.5);
+      rig.armR.rotation.y = lerp(rig.armR.rotation.y, -1.2, k * 0.5);
+      wrist(rig, -1.5, 0.3);
+      if (P.sheathT > 0.45 && !P.sheathed) {
+        sheathNow();
+        burst(P.pos.x - Math.cos(P.facing) * 0.3, P.y + 1.15, P.pos.z + Math.sin(P.facing) * 0.3, 6, 0xfff4c0, 1, 1, 0.3, 0);
+      }
+    }
   }
 
   P.pos.addScaledVector(P.kb, dt);
@@ -713,7 +887,8 @@ function updatePlayer(dt) {
   rig.root.position.set(P.pos.x, P.y, P.pos.z);
   rig.root.rotation.y = P.facing;
   if (P.state !== 'dodge' && P.state !== 'attack' && P.state !== 'spirit') animateWalk(rig, dt, P.grounded ? speedFrac : 0);
-  if (P.state !== 'dodge') twoHandGrip(rig);
+  if (P.sheathed && P.state !== 'dodge') handOnHilt(rig);
+  else if (P.state !== 'dodge') twoHandGrip(rig);
   if (!P.grounded && P.state === 'idle') { rig.legL.rotation.x = -0.5; rig.legR.rotation.x = 0.3; }
   rig.root.visible = !(P.hitInvul > 0.2 && Math.floor(P.hitInvul * 20) % 2 === 0);
 
@@ -1406,7 +1581,7 @@ const CONTROLS_HTML = `
     <kbd>Left click / J</kbd><span>Slash &mdash; press again for a 3-hit combo</span>
     <kbd>Right click / K</kbd><span>Heavy strike &mdash; breaks a big demon's guard</span>
     <kbd>Q (hold)</kbd><span>Block. Press just before a hit lands to <b>parry</b> and deflect shurikens</span>
-    <kbd>X</kbd><span>Spirit Slash when your Ki bar is full</span>
+    <kbd>X</kbd><span>Iaijutsu: Thousand Cuts when your Ki bar is full &mdash; flash through every nearby foe</span>
     <kbd>Tab</kbd><span>Lock on to an enemy</span>
     <kbd>Space</kbd><span>Jump &mdash; leaps over ground slams</span>
     <kbd>F</kbd><span>Dodge roll (brief invulnerability)</span>
@@ -1989,9 +2164,16 @@ function frame() {
     else if (slowmo > 0) { slowmo -= dt; dt *= 0.35; }
     time += dt;
     const playerSafe = P.dead || !!townAt(P.pos.x, P.pos.z);
-    updatePlayer(dt);
-    updateEnemies(dt, playerSafe);
-    updateProjectiles(dt);
+    if (special) {
+      // The world nearly freezes while the samurai moves at full speed.
+      updateSpecial(Math.min(0.05, rawDt));
+      updateEnemies(dt * 0.03, playerSafe);
+      updateProjectiles(dt * 0.03);
+    } else {
+      updatePlayer(dt);
+      updateEnemies(dt, playerSafe);
+      updateProjectiles(dt);
+    }
     updateNPCs(dt);
     updatePortals(dt);
     updateEffects(dt);

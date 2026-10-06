@@ -63,7 +63,7 @@ export const TOWNS = [
     stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'c:stamina'],
     elder: [
       'Red oni stalk the riverlands now. They hit hard but swing slow &mdash; parry them, or roll through the blow.',
-      'Every strike you land fills your Ki. When it is full, press X to unleash a Spirit Slash.',
+      'Every strike you land fills your Ki. When it is full, press X: draw like lightning and cut down every foe around you in a single breath. We call it Iaijutsu.',
       'The Mist Fang ninja camp lies east of the river bend. Ishiyama lies to the north-west.',
     ],
   },

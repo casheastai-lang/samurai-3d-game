@@ -175,6 +175,12 @@ function buildLod(r) {
   root.scale.copy(saved);
   r.lod = lod;
 }
+// Show the sword in the hand (drawn) or resting in the scabbard (sheathed).
+export function setSheathed(r, sheathed) {
+  if (!r.sheathedHilt || !r.blade) return;
+  r.blade.visible = !sheathed;
+  r.sheathedHilt.visible = sheathed;
+}
 // Switch between the full animated model and its single-mesh stand-in.
 export function setLod(r, far) {
   if (!r.lod || r.lod.visible === far) return;
@@ -206,12 +212,14 @@ export function makeKatana(o = {}) {
   const tip = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 4), steel);
   tip.position.y = -0.19 - bl - 0.08; tip.rotation.x = Math.PI;
   for (const m of [h, tsuba, blade, tip]) { m.castShadow = true; g.add(m); }
+  blade.userData.steel = tip.userData.steel = true;
   if (style === 'jagged') {
     const tooth = new THREE.ConeGeometry(0.035, 0.14, 3);
     for (let i = 0; i < 6; i++) {
       const t = new THREE.Mesh(tooth, steel);
       t.position.set(0, -0.35 - i * (bl / 6.5), -0.07);
       t.rotation.x = -Math.PI / 2 - 0.5;
+      t.userData.steel = true;
       g.add(t);
     }
   }
@@ -411,7 +419,33 @@ export function makeHumanoid(o = {}) {
       weapon.add(knuckle);
     }
   }
-  if (o.weapon === 'katana') weapon.add(makeKatana(o.blade));
+  let blade = null, sheathedHilt = null;
+  if (o.weapon === 'katana') { blade = makeKatana(o.blade); weapon.add(blade); }
+  if (o.sheath && o.weapon === 'katana') {
+    // Saya (scabbard) worn through the obi on the off-hand hip: mouth forward and up,
+    // tip trailing down behind. When the sword is sheathed its handle shows at the mouth.
+    const len = 1.25 * (o.blade?.len ?? 1) + 0.08;
+    const lac = new THREE.MeshStandardMaterial({ color: 0x141012, roughness: 0.22, metalness: 0.1 });
+    const gold = new THREE.MeshStandardMaterial({ color: 0xb8902f, metalness: 0.8, roughness: 0.3 });
+    const sheath = new THREE.Group();
+    sheath.position.set(-0.27, 0.12, 0.2);
+    sheath.rotation.set(-0.38, -0.12, 0);
+    body.add(sheath);
+    const saya = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.032, len, 12).rotateX(Math.PI / 2).scale(0.8, 1.25, 1), lac);
+    saya.position.z = -len / 2;
+    const mouth = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.047, 0.05, 12).rotateX(Math.PI / 2), gold);
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), gold);
+    cap.position.z = -len;
+    const cord = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 6, 14), new THREE.MeshStandardMaterial({ color: o.scarf ?? 0x2a3a7a, roughness: 0.8 }));
+    cord.position.z = -0.12;
+    for (const m of [saya, mouth, cap, cord]) { m.castShadow = true; sheath.add(m); }
+    // The sheathed sword's handle, pointing forward out of the scabbard mouth.
+    sheathedHilt = makeKatana(o.blade);
+    sheathedHilt.rotation.x = Math.PI / 2;
+    sheathedHilt.position.z = 0.2;
+    sheathedHilt.traverse(m => { if (m.userData.steel) m.visible = false; });
+    sheath.add(sheathedHilt);
+  }
   else if (o.weapon === 'blade') weapon.add(makeShortBlade());
   else if (o.weapon === 'staff') weapon.add(makeStaff());
   // Guard stance: blade angled up and forward from the fist.
@@ -419,7 +453,7 @@ export function makeHumanoid(o = {}) {
   weapon.rotation.x = wristRest;
 
   root.scale.setScalar(o.scale ?? 1);
-  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana' };
+  const rig = { root, body, head, legL, legR, armL, armR, weapon, mats, walk: 0, wristRest, twoHanded: o.weapon === 'katana', blade, sheathedHilt };
   mergeRig(rig);
   return rig;
 }

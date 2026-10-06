@@ -342,3 +342,31 @@ export function spawnImpact(x, y, z, { color = 0xfff0c0, size = 1.4, blood = nul
     }
   }
 }
+
+// ---------- Straight light streak (a cut through the air) ----------
+// A bright core line inside a soft wide glow, from a to b, fading out over `life`.
+export function spawnSlashLine(a, b, { color = 0xffffff, width = 0.09, life = 0.5, delay = 0 } = {}) {
+  const len = a.distanceTo(b);
+  if (len < 0.01) return;
+  const g = new THREE.Group();
+  const core = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const glow = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+  const c1 = new THREE.Mesh(new THREE.BoxGeometry(width * 0.35, width * 0.35, len), core);
+  const c2 = new THREE.Mesh(new THREE.BoxGeometry(width * 2.2, width * 0.25, len * 1.04), glow);
+  g.add(c1, c2);
+  g.position.copy(a).lerp(b, 0.5);
+  g.lookAt(b);
+  g.rotateZ(Math.random() * Math.PI);
+  scene.add(g);
+  effects.push({
+    t: -delay, life,
+    update(t) {
+      if (t < 0) return;
+      const k = t / this.life;
+      core.opacity = 1 - k;
+      glow.opacity = 0.7 * (1 - k);
+      g.scale.set(1 - k * 0.6, 1 - k * 0.6, 1 + k * 0.08);
+    },
+    dispose() { scene.remove(g); c1.geometry.dispose(); c2.geometry.dispose(); core.dispose(); glow.dispose(); },
+  });
+}
