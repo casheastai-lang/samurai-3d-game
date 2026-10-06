@@ -2768,7 +2768,7 @@ function interactLabel(it) {
 function updateWorldState(dt) {
   if (inNewWorld(P.pos.x) !== wasNw) { wasNw = !wasNw; updateQuest(); }
   const inside = inInterior(P.pos.x);
-  roomLight.intensity = inside ? 45 : 0;
+  roomLight.intensity = inside ? 30 : 0;
   sun.intensity = inside ? 0 : 3.6;
   if (inside) {
     const r = roomAt(P.pos.x, P.pos.z);
