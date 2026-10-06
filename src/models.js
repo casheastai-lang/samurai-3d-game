@@ -1095,6 +1095,12 @@ export function makeRoom(kind, ch = '道') {
   // Glowing shoji windows on the back wall, as if the sun is outside.
   const sho = tmat('shoji', 0xfff6e8, 2, 1, { emissive: 0xffd9a0, emissiveIntensity: 0.55 });
   for (const x of [-3.5, 3.5]) flat(new THREE.BoxGeometry(2.6, 1.2, 0.05), sho, x, 1.6, -D / 2 + 0.13);
+  // Through the door: a sunlit garden backdrop, and a noren curtain across the top.
+  const yard = new THREE.Mesh(new THREE.PlaneGeometry(9, 6), new THREE.MeshBasicMaterial({ color: 0xcfe0b8, fog: false }));
+  yard.position.set(0, 2.4, D / 2 + 3); yard.rotation.y = Math.PI; g.add(yard);
+  const yardGround = new THREE.Mesh(new THREE.PlaneGeometry(9, 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x9a8a62, fog: false }));
+  yardGround.position.set(0, -0.05, D / 2 + 1.5); g.add(yardGround);
+  for (let k = 0; k < 3; k++) flat(new THREE.BoxGeometry(0.56, 0.8, 0.03), smat(0x2a3a6a, { side: THREE.DoubleSide }), -0.6 + k * 0.6, 1.8, D / 2 - 0.05);
   // Ceiling and beams.
   flat(new THREE.BoxGeometry(W, 0.12, D), tmat('wood', 0x6a5038, 3, 3), 0, H, 0);
   for (let z = -D / 2 + 1.5; z < D / 2; z += 2) flat(new THREE.BoxGeometry(W, 0.22, 0.22), dark, 0, H - 0.15, z);
