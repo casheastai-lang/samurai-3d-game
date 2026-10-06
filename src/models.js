@@ -822,3 +822,82 @@ export function makeKeep() {
   mesh(new THREE.BoxGeometry(2.6, 3.2, 0.1), smat(0x0a0606), 0, 1.6, 5.02, g, false);
   return g;
 }
+
+// ---------- City architecture ----------
+// A flared hip roof: a flattened four-sided cone with a ridge cap and gold finials.
+function hipRoof(g, w, d, y, color, rise = 1.6) {
+  const roof = mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.82, rise, 4), tmat('roof', color, 4, 2), 0, y + rise / 2, 0, g);
+  roof.rotation.y = Math.PI / 4;
+  roof.scale.set(w / Math.max(w, d) * 1.18, 1, d / Math.max(w, d) * 1.18);
+  mesh(new THREE.BoxGeometry(Math.max(0.4, w * 0.25), 0.3, 0.3), smat(0x1a1a1e, { roughness: 0.4 }), 0, y + rise - 0.05, 0, g);
+}
+
+// Castle keep (tenshu) on sloped stone walls: white plaster tiers under dark tile roofs.
+export function makeCastle(roofColor = 0x3a4250) {
+  const g = new THREE.Group();
+  const base = mesh(new THREE.CylinderGeometry(9, 12.5, 7, 4, 1), tmat('stone', 0xb8b2a6, 4, 2), 0, 3.5, 0, g);
+  base.rotation.y = Math.PI / 4;
+  const plaster = tmat('plaster', 0xf8f4ea, 2, 1), beam = tmat('wood', 0x5a3a28, 4, 1);
+  const tint = new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.45).getHex();
+  const tiers = [[12, 4.2, 10], [9.5, 3.6, 8], [7.2, 3.2, 6], [5, 3, 4.2]];
+  let y = 7;
+  for (const [w, h, d] of tiers) {
+    mesh(new THREE.BoxGeometry(w, h, d), plaster, 0, y + h / 2, 0, g);
+    mesh(new THREE.BoxGeometry(w + 0.1, 0.25, d + 0.1), beam, 0, y + h - 0.3, 0, g);
+    // Rows of dark windows.
+    for (const sz of [-1, 1]) for (let i = 0; i < Math.floor(w / 2.2); i++) {
+      mesh(new THREE.BoxGeometry(0.7, 0.9, 0.05), smat(0x1c1612), -w / 2 + 1.1 + i * 2.2 + (w % 2.2) / 2, y + h * 0.55, sz * (d / 2 + 0.02), g, false);
+    }
+    hipRoof(g, w + 1.6, d + 1.6, y + h - 0.1, tint, 1.7);
+    y += h + 1.2;
+  }
+  // Golden shachihoko on the ridge.
+  for (const sx of [-1, 1]) mesh(new THREE.ConeGeometry(0.3, 0.9, 8), smat(0xd4a72c, { metalness: 0.9, roughness: 0.25 }), sx * 1.4, y + 0.3, 0, g);
+  return g;
+}
+
+// Five-storey pagoda with a bronze spire.
+export function makePagoda(roofColor = 0x3a2a2a) {
+  const g = new THREE.Group();
+  mesh(new THREE.BoxGeometry(8, 1.2, 8), tmat('stone', 0xb8b2a6, 3, 0.5), 0, 0.6, 0, g);
+  const red = smat(0xa8301e, { roughness: 0.5 }), white = tmat('plaster', 0xf4eee2, 1, 1);
+  const tint = new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.4).getHex();
+  let y = 1.2;
+  for (let i = 0; i < 5; i++) {
+    const w = 5.2 - i * 0.55, h = 2.6;
+    mesh(new THREE.BoxGeometry(w, h, w), i % 2 ? white : red, 0, y + h / 2, 0, g);
+    hipRoof(g, w + 2.6, w + 2.6, y + h, tint, 0.9);
+    y += h + 0.7;
+  }
+  mesh(new THREE.CylinderGeometry(0.12, 0.2, 5, 10), smat(0x8a7a3a, { metalness: 0.8, roughness: 0.35 }), 0, y + 2.4, 0, g);
+  for (let i = 0; i < 6; i++) mesh(new THREE.TorusGeometry(0.42 - i * 0.04, 0.05, 6, 14), smat(0x8a7a3a, { metalness: 0.8, roughness: 0.35 }), 0, y + 0.6 + i * 0.6, 0, g).rotation.x = Math.PI / 2;
+  return g;
+}
+
+// One stretch of city wall: sloped stone footing, white plaster, tiled cap. Runs along X.
+export function makeCityWall(len, roofColor) {
+  const g = new THREE.Group();
+  mesh(new THREE.BoxGeometry(len + 0.3, 2.4, 2.6), tmat('stone', 0xb0aa9e, len / 3, 0.8), 0, 1.2, 0, g);
+  mesh(new THREE.BoxGeometry(len + 0.3, 2.2, 0.8), tmat('plaster', 0xf2ece0, len / 4, 0.7), 0, 3.5, 0, g);
+  mesh(new THREE.BoxGeometry(len + 0.6, 0.4, 1.5), tmat('roof', new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.45).getHex(), len / 1.5, 1), 0, 4.75, 0, g);
+  return g;
+}
+
+// Gatehouse spanning the road: two towers and a roofed bridge over the gateway.
+export function makeGatehouse(roofColor) {
+  const g = new THREE.Group();
+  const stone = tmat('stone', 0xb0aa9e, 1.5, 1.5), plaster = tmat('plaster', 0xf2ece0, 1, 1);
+  const tint = new THREE.Color(roofColor).lerp(new THREE.Color(0xffffff), 0.45).getHex();
+  for (const sx of [-1, 1]) {
+    mesh(new THREE.BoxGeometry(4.6, 4.5, 4.6), stone, sx * 6.8, 2.25, 0, g);
+    mesh(new THREE.BoxGeometry(3.8, 3.4, 3.8), plaster, sx * 6.8, 6.2, 0, g);
+    hipRoof(g, 5.6, 5.6, 7.8, tint, 1.5);
+    g.children[g.children.length - 2].position.x = sx * 6.8;
+    g.children[g.children.length - 1].position.x = sx * 6.8;
+  }
+  mesh(new THREE.BoxGeometry(9.6, 1.6, 3.4), plaster, 0, 7.0, 0, g);
+  mesh(new THREE.BoxGeometry(9.8, 0.4, 3.6), tmat('wood', 0x4a3020, 4, 1), 0, 6.1, 0, g);
+  hipRoof(g, 12, 4.6, 7.7, tint, 1.3);
+  for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.28, 0.32, 6, 12), smat(0x3a2418), sx * 4.4, 3, 0, g);
+  return g;
+}

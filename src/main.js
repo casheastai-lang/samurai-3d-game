@@ -5,7 +5,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
-  PATH, TOWN_IDX, TOWN_R, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS,
+  PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
   NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK,
 } from './data.js';
@@ -1009,17 +1009,18 @@ function pickType(mix) {
   return type;
 }
 function spawnWorldEnemies() {
-  for (let tier = 0; tier < 4; tier++) {
-    const a = TOWN_IDX[tier], b = tier < 3 ? TOWN_IDX[tier + 1] : PATH.length - 1;
+  for (let leg = 0; leg < REGIONS.length; leg++) {
+    const tier = REGIONS[leg].tier;
+    const a = TOWN_IDX[leg], b = leg < TOWN_IDX.length - 1 ? TOWN_IDX[leg + 1] : PATH.length - 1;
     let groups = 0, tries = 0;
-    while (groups < 12 && tries++ < 400) {
+    while (groups < 10 && tries++ < 400) {
       const k = a + Math.floor(wrand() * (b - a));
       const u = wrand();
       const [ax, az] = PATH[k], [bx, bz] = PATH[k + 1];
       let dx = bx - ax, dz = bz - az; const l = Math.hypot(dx, dz); dx /= l; dz /= l;
       const side = wrand() < 0.5 ? -1 : 1, off = wr(5, 42);
       const cx = ax + (bx - ax) * u - dz * off * side, cz = az + (bz - az) * u + dx * off * side;
-      if (townDist(cx, cz) < TOWN_R + 16 || arenaDist(cx, cz) < ARENA.r + 14 || ninjaDist(cx, cz) < NINJA_R + 18) continue;
+      if (townDist(cx, cz) < 16 || arenaDist(cx, cz) < ARENA.r + 14 || ninjaDist(cx, cz) < NINJA_R + 18) continue;
       if (cx < BOUNDS.minX + 10 || cx > BOUNDS.maxX - 10) continue;
       const type = pickType(TIER_MIX[tier]);
       const size = type === 'captain' ? 1 : 2 + Math.floor(wrand() * 2);
@@ -1330,7 +1331,7 @@ function updateEnemies(dt, playerSafe) {
     }
     for (const t of TOWNS) {
       const tx = e.pos.x - t.x, tz = e.pos.z - t.z, tl = Math.hypot(tx, tz);
-      if (tl < TOWN_R + 2) { e.pos.x = t.x + (tx / tl) * (TOWN_R + 2); e.pos.z = t.z + (tz / tl) * (TOWN_R + 2); }
+      if (tl < t.r + 2) { e.pos.x = t.x + (tx / tl) * (t.r + 2); e.pos.z = t.z + (tz / tl) * (t.r + 2); }
     }
     if (e !== boss) collideStatic(e.pos, d.radius * 0.8);
     clampBounds(e.pos);
@@ -1418,7 +1419,7 @@ function updateNPCs(dt) {
     let moving = 0;
     if (v.wait > 0) v.wait -= dt;
     else if (!v.target) {
-      const a = Math.random() * Math.PI * 2, r = rand(3, 17);
+      const a = Math.random() * Math.PI * 2, r = rand(3, v.town.r * 0.58);
       v.target = { x: v.town.x + Math.cos(a) * r, z: v.town.z + Math.sin(a) * r };
     } else {
       const tx = v.target.x - v.pos.x, tz = v.target.z - v.pos.z, tl = Math.hypot(tx, tz);
@@ -1557,7 +1558,7 @@ modalBox.addEventListener('click', e => {
     case 'new': startGame(null); openCreator(true); break;
     case 'continue': startGame(loadSave()); break;
     case 'buy': buy(arg); break;
-    case 'tab': shopTab = arg; openShop(shopTown); break;
+    case 'tab': shopTab = arg; openShop(shopTown, shopDef); break;
     case 'equipW': equipWeapon(arg); break;
     case 'wear': wearSkin(arg); break;
     case 'rest': rest(); break;
@@ -1629,7 +1630,7 @@ function nearInteract() {
 function interact() {
   const it = nearInteract();
   if (!it) return;
-  if (it.kind === 'shop') openShop(it.town);
+  if (it.kind === 'shop') openShop(it.town, it.shop);
   else if (it.kind === 'shrine') openShrine(it.town);
   else if (it.kind === 'chest') lootChest(it.index);
   else openElder(it.town);
@@ -1650,13 +1651,15 @@ const priceTag = p => `<div class="price">&#9672; ${p}</div>`;
 const buyBtn = (id, price) => `<button data-act="buy|${id}" ${P.gold < price ? 'disabled' : ''}>${P.gold < price ? 'Need gold' : 'Buy'}</button>`;
 const hex = c => '#' + c.toString(16).padStart(6, '0');
 
-let shopTown = null, shopTab = 'swords';
-function openShop(town) {
-  shopTown = town;
-  const tabs = [['swords', 'Swords'], ['armor', 'Armor & Charms'], ['skins', 'Outfits'], ['supplies', 'Supplies']];
+let shopTown = null, shopDef = null, shopTab = 'swords';
+function openShop(town, shop) {
+  shopTown = town; shopDef = shop;
+  const has = { swords: shop.stock.some(id => id.startsWith('w:')), armor: shop.stock.some(id => /^[ac]:/.test(id)), skins: true, supplies: shop.stock.some(id => CONSUMABLES[id]) };
+  const tabs = [['swords', 'Swords'], ['armor', 'Armor & Charms'], ['skins', 'Outfits'], ['supplies', 'Supplies']].filter(([k]) => has[k]);
+  if (!has[shopTab]) shopTab = tabs[0][0];
   let rows = '';
   if (shopTab === 'swords') {
-    rows = town.stock.filter(id => id.startsWith('w:')).map(id => {
+    rows = shop.stock.filter(id => id.startsWith('w:')).map(id => {
       const key = id.slice(2), w = WEAPONS[key];
       const owned = P.ownedWeapons.includes(key);
       const btn = owned
@@ -1667,7 +1670,7 @@ function openShop(town) {
     }).join('');
     rows += `<p class="sub">Your sword: <b>${W().name}</b> (${weaponLine(W())}). Swap anytime with I.</p>`;
   } else if (shopTab === 'armor') {
-    rows = town.stock.filter(id => id.startsWith('a:') || id.startsWith('c:')).map(id => {
+    rows = shop.stock.filter(id => id.startsWith('a:') || id.startsWith('c:')).map(id => {
       const [kind, key] = id.split(':');
       if (kind === 'a') {
         const a = ARMORS[key], cur = ARMORS[P.armor];
@@ -1689,12 +1692,12 @@ function openShop(town) {
       return itemRow(swatch + s.name, s.desc, owned ? '<div class="price">Owned</div>' : priceTag(s.price), btn);
     }).join('');
   } else {
-    rows = town.stock.filter(id => CONSUMABLES[id]).map(id => {
+    rows = shop.stock.filter(id => CONSUMABLES[id]).map(id => {
       const c = CONSUMABLES[id], have = id === 'potion' ? P.potions : P.elixirs;
       return itemRow(c.name, `${c.desc} &middot; carrying ${have}/9`, priceTag(c.price), have >= 9 ? '<button disabled>Full</button>' : buyBtn(id, c.price));
     }).join('');
   }
-  const html = `<h2>${town.shopName}</h2><p class="sub">${town.merchant} &middot; ${town.name}</p>
+  const html = `<h2>${shop.shopName}</h2><p class="sub">${shop.merchant} &middot; ${town.name}</p>
     <div class="tabs">${tabs.map(([k, n]) => `<button class="tab ${shopTab === k ? 'on' : ''}" data-act="tab|${k}">${n}</button>`).join('')}</div>
     <div class="gold">Your purse: &#9672; <b>${P.gold}</b></div>
     <div class="items">${rows}</div>
@@ -1721,21 +1724,21 @@ function buy(id) {
     rebuildPlayerRig();
   }
   save();
-  openShop(shopTown);
+  openShop(shopTown, shopDef);
 }
 function equipWeapon(key) {
   if (!P.ownedWeapons.includes(key)) return;
   P.weapon = key;
   rebuildPlayerRig();
   save();
-  if (ui === 'shop') openShop(shopTown); else openInventory();
+  if (ui === 'shop') openShop(shopTown, shopDef); else openInventory();
 }
 function wearSkin(key) {
   if (!P.ownedSkins.includes(key)) return;
   P.skin = key;
   rebuildPlayerRig();
   save();
-  if (ui === 'shop') openShop(shopTown); else openInventory();
+  if (ui === 'shop') openShop(shopTown, shopDef); else openInventory();
 }
 function openInventory() {
   const swords = P.ownedWeapons.map(key => {
@@ -1797,7 +1800,7 @@ function travel(i) {
   }, 500);
 }
 function openElder(town) {
-  openModal(`<h2>Elder of ${town.name}</h2><p class="sub">An old villager leans on a staff.</p>
+  openModal(`<h2>${town.elderTitle ?? 'Elder of ' + town.name}</h2><p class="sub">${town.city ? 'They receive you in the city square.' : 'An old villager leans on a staff.'}</p>
     ${town.elder.map(l => `<p>&ldquo;${l}&rdquo;</p>`).join('')}
     <div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
 }
@@ -1914,18 +1917,19 @@ function drawMap(ctx, Wd, H, cx, cz, scale, full) {
     }
   } else {
     ctx.fillStyle = 'rgba(70, 40, 35, 0.6)';
-    ctx.fillRect(0, Z(-770), Wd, Math.max(0, Z(BOUNDS.minZ - 50) - Z(-770)));
+    ctx.fillRect(0, Z(ASH_Z), Wd, Math.max(0, Z(BOUNDS.minZ - 50) - Z(ASH_Z)));
     ctx.strokeStyle = '#c4a874'; ctx.lineWidth = full ? 4 : 3; ctx.lineJoin = 'round';
     ctx.beginPath();
     PATH.forEach(([x, z], i) => (i ? ctx.lineTo(X(x), Z(z)) : ctx.moveTo(X(x), Z(z))));
     ctx.stroke();
     for (const t of TOWNS) {
       const known = P.discovered.includes(t.index);
-      ctx.fillStyle = known ? 'rgba(232, 193, 90, 0.85)' : 'rgba(150, 150, 150, 0.6)';
-      ctx.beginPath(); ctx.arc(X(t.x), Z(t.z), Math.max(5, TOWN_R * scale), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = known ? (t.city ? 'rgba(240, 220, 170, 0.9)' : 'rgba(232, 193, 90, 0.85)') : 'rgba(150, 150, 150, 0.6)';
+      ctx.beginPath(); ctx.arc(X(t.x), Z(t.z), Math.max(t.city ? 8 : 5, t.r * scale), 0, Math.PI * 2); ctx.fill();
+      if (t.city) { ctx.strokeStyle = '#5a4a3a'; ctx.lineWidth = 2; ctx.stroke(); }
       if (full || scale > 0.5) {
         ctx.fillStyle = '#fff';
-        ctx.fillText(known ? t.name : '???', X(t.x), Z(t.z) - Math.max(8, TOWN_R * scale) - 4);
+        ctx.fillText(known ? t.name : '???', X(t.x), Z(t.z) - Math.max(8, t.r * scale) - 4);
       }
     }
     NINJA_BASES.forEach((nb, i) => {
@@ -2000,19 +2004,19 @@ function updateWorldState(dt) {
     const i = DEMON_BASES.indexOf(realm);
     hud.locName.textContent = realm.name;
     hud.locSub.textContent = P.warlordsDead.includes(i) ? (P.chestsLooted.includes(i) ? 'Conquered' : 'The treasure awaits') : 'Danger ' + '★'.repeat(Math.min(5, i + 2));
-  } else if (t) { hud.locName.textContent = t.name; hud.locSub.textContent = 'Safe haven · shop · shrine'; }
+  } else if (t) { hud.locName.textContent = t.name; hud.locSub.textContent = t.city ? 'Walled city · market · forge · shrine' : 'Safe haven · shop · shrine'; }
   else if (nb) { const i = NINJA_BASES.indexOf(nb); hud.locName.textContent = nb.name; hud.locSub.textContent = 'Ninja base · Danger ' + '★'.repeat(i + 1); }
   else if (arenaDist(P.pos.x, P.pos.z) < ARENA.r + 30) { hud.locName.textContent = 'Shrine of Oni Mountain'; hud.locSub.textContent = P.bossDead ? 'Peaceful at last' : 'Danger ★★★★★'; }
   else {
     const seg = nearestSeg(P.pos.x, P.pos.z).index;
     let tier = 0;
-    for (let k = 0; k < 4; k++) if (seg >= TOWN_IDX[k]) tier = k;
+    for (let k = 0; k < TOWN_IDX.length; k++) if (seg >= TOWN_IDX[k]) tier = k;
     hud.locName.textContent = REGIONS[tier].name;
     hud.locSub.textContent = 'Danger ' + '★'.repeat(REGIONS[tier].danger);
   }
 
   // Sky and light: blue road, ashen north, burning demon realm.
-  const a = realm ? 0 : smooth(-720, -880, P.pos.z) * (P.bossDead ? 0.3 : 1);
+  const a = realm ? 0 : smooth(ASH_Z + 30, ASH_Z - 130, P.pos.z) * (P.bossDead ? 0.3 : 1);
   const base = realm ? PAL.realm : PAL.day;
   skyTop.copy(base.top).lerp(PAL.ash.top, a);
   skyHor.copy(base.hor).lerp(PAL.ash.hor, a);
@@ -2026,13 +2030,13 @@ function updateWorldState(dt) {
   updateSky(camera.position, dt, skyTop, skyHor, sunCol, !!realm);
   refreshEnvironment(realm ? 'realm' : a > 0.5 ? 'ash' : 'day');
   scene.environmentIntensity = realm ? 0.5 : lerp(0.8, 0.55, a);
-  const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < -740 ? 'ash' : P.pos.z > -560 ? 'petals' : 'none';
+  const mode = realm || arenaDist(P.pos.x, P.pos.z) < 90 ? 'embers' : P.pos.z < ASH_Z ? 'ash' : P.pos.z > -620 || townAt(P.pos.x, P.pos.z) ? 'petals' : 'none';
   updateAmbient(dt, _center.set(P.pos.x, P.y, P.pos.z), mode, time);
 
   const it = P.dead ? null : nearInteract();
   if (it) {
     hud.prompt.style.display = 'block';
-    const label = it.kind === 'shop' ? 'Trade at ' + it.town.shopName
+    const label = it.kind === 'shop' ? 'Trade at ' + it.shop.shopName
       : it.kind === 'shrine' ? 'Pray at the shrine &mdash; rest, save &amp; travel'
       : it.kind === 'chest' ? (P.warlordsDead.includes(it.index) ? 'Open the treasure chest' : 'Sealed chest &mdash; defeat the warlord')
       : 'Talk to the elder';
@@ -2082,7 +2086,7 @@ function updateCamera(dt) {
 }
 
 // ============================================================ Save / load / start
-const SAVE_KEY = 'roninsroad.save.v2', OLD_SAVE_KEY = 'roninsroad.save.v1';
+const SAVE_KEY = 'roninsroad.save.v3', OLD_KEYS = ['roninsroad.save.v2', 'roninsroad.save.v1'];
 function save() {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
@@ -2096,7 +2100,14 @@ function save() {
 function loadSave() {
   try {
     let s = JSON.parse(localStorage.getItem(SAVE_KEY));
-    if (!s) s = JSON.parse(localStorage.getItem(OLD_SAVE_KEY));
+    if (!s) {
+      // Older saves knew four towns; map them onto the new road with its two cities.
+      for (const k of OLD_KEYS) { s = JSON.parse(localStorage.getItem(k)); if (s) break; }
+      if (s) {
+        s.discovered = (s.discovered ?? [0]).map(i => OLD_TOWN_ORDER[i] ?? 0);
+        s.lastTown = OLD_TOWN_ORDER[s.lastTown] ?? 0;
+      }
+    }
     if (!s || !WEAPONS[s.weapon] || !ARMORS[s.armor] || !TOWNS[s.lastTown]) return null;
     s.ownedWeapons = [...new Set(['worn', s.weapon, ...(s.ownedWeapons ?? [])])].filter(k => WEAPONS[k]);
     s.ownedSkins = [...new Set(['ronin', 'custom', ...(s.ownedSkins ?? [])])].filter(k => SKINS[k]);

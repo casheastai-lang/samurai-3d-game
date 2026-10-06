@@ -35,12 +35,18 @@ so no install or internet connection is needed.
 
 ## The journey
 
-| Town | Swords for sale | The road beyond |
+Two small towns, then a great walled city, then two more towns and a second city:
+
+| Stop | Shops | The road beyond |
 | --- | --- | --- |
-| Sakura Village | Steel Katana, Kaze Wakizashi (fast) | Bamboo Road: bandits, a few red oni, Kage Hideout |
-| Kawaguchi | Tamahagane Blade, Frost Fang (slows) | Riverlands: red oni, Mist Fang Camp |
-| Ishiyama | Mountain Splitter (long odachi), Inferno Edge (burns), Muramasa (lifesteal) | Stone Pass: blue oni, oni captains, Iron Shadow Fort |
-| Kurogane Fort | Raijin's Thunder (chain lightning), Onikiri (bonus vs demons) | Ashen Wastes, Black Lotus Stronghold, then the Demon King |
+| Sakura Village | Steel Katana, Kaze Wakizashi, armor | Bamboo Road: bandits, red oni, Kage Hideout |
+| Kawaguchi | Tamahagane Blade, Frost Fang, Iron Do | Riverlands: red oni, Mist Fang Camp |
+| **Miyako, the Capital** (city) | Grand Market; Forge of Masamune with the city-only **Kogarasu-maru** | Capital Plains |
+| Ishiyama | Mountain Splitter, Inferno Edge, O-yoroi | Stone Pass: blue oni, captains, Iron Shadow Fort |
+| Tsukimura | Raijin's Thunder, Dragon-Scale Armor | Moonlit Forest, Black Lotus Stronghold |
+| **Kurogane Castle City** (city) | Fortress Quartermaster; Black Iron Forge with the city-only **Dojigiri Yasutsuna** | Ashen Wastes, then the Demon King |
+
+Cities are walled, with gatehouses over the road, a castle keep, a five-storey pagoda, a market street, crowds, two shops and a magistrate or lord who gives advice.
 
 Every shop also sells armor, charms, potions and six outfits: Wandering Ronin, Crimson Samurai, Shadow Ninja, White Wolf, Demon Hunter and Golden Shogun.
 

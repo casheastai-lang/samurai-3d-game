@@ -1,12 +1,13 @@
 // World building: terrain, vegetation, towns, ninja bases, demon fortresses and sky.
 import * as THREE from 'three';
 import {
-  PATH, TOWN_R, ARENA, BOUNDS, TOWNS, TOWN_IDX, NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, REALM_X,
+  PATH, ARENA, BOUNDS, TOWNS, TOWN_IDX, NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, REALM_X, ASH_Z,
   LAKES, WATER_Y,
 } from './data.js';
 import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
   makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat, mergeStatic,
+  makeCastle, makePagoda, makeCityWall, makeGatehouse,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
@@ -32,13 +33,14 @@ function nearestSeg(x, z) {
   return { index: best, dist: bd };
 }
 const roadDist = (x, z) => nearestSeg(x, z).dist;
+// Distance to the edge of the nearest town or city (negative inside it).
 function townDist(x, z) {
   let m = Infinity;
-  for (const t of TOWNS) m = Math.min(m, Math.hypot(x - t.x, z - t.z));
+  for (const t of TOWNS) m = Math.min(m, Math.hypot(x - t.x, z - t.z) - t.r);
   return m;
 }
 function townAt(x, z) {
-  for (const t of TOWNS) if (Math.hypot(x - t.x, z - t.z) < TOWN_R) return t;
+  for (const t of TOWNS) if (Math.hypot(x - t.x, z - t.z) < t.r) return t;
   return null;
 }
 const arenaDist = (x, z) => Math.hypot(x - ARENA.x, z - ARENA.z);
@@ -79,7 +81,7 @@ function height(x, z) {
   const n = Math.sin(x * 0.021) * Math.cos(z * 0.017) * 5
     + Math.sin(x * 0.053 + 1.3) * Math.sin(z * 0.047 + 0.7) * 2.2
     + Math.sin((x + z) * 0.11) * 0.5;
-  const f = smooth(5, 24, roadDist(x, z)) * smooth(TOWN_R, TOWN_R + 22, townDist(x, z))
+  const f = smooth(5, 24, roadDist(x, z)) * smooth(0, 22, townDist(x, z))
     * smooth(ARENA.r + 2, ARENA.r + 22, arenaDist(x, z)) * smooth(NINJA_R + 2, NINJA_R + 22, ninjaDist(x, z)) * lakeFlat;
   const edge = Math.max(0, Math.abs(x) - BOUNDS.maxX + 15) + Math.max(0, BOUNDS.minZ + 15 - z, z - BOUNDS.maxZ + 15);
   let h = n * f + Math.pow(edge, 1.3) * 0.9;
@@ -139,8 +141,8 @@ function addWind(mat, strength, heightScale) {
 }
 
 function buildTerrain() {
-  const minX = -440, maxX = 440, minZ = -1100, maxZ = 210;
-  const geo = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ, 220, 328);
+  const minX = -440, maxX = 440, minZ = BOUNDS.minZ - 110, maxZ = 210;
+  const geo = new THREE.PlaneGeometry(maxX - minX, maxZ - minZ, 220, Math.round((maxZ - minZ) / 4));
   geo.rotateX(-Math.PI / 2);
   geo.translate((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
   const pos = geo.attributes.position;
@@ -148,16 +150,18 @@ function buildTerrain() {
   const g1 = new THREE.Color(0x3d5a26), g2 = new THREE.Color(0x5e7a36), dirt = new THREE.Color(0x8a7050);
   const plaza = new THREE.Color(0xb5a07a), ash = new THREE.Color(0x4a3a35), arenaC = new THREE.Color(0x341915), campC = new THREE.Color(0x6a5a44);
   const rock = new THREE.Color(0x7a756c), snow = new THREE.Color(0xeeeef4), c = new THREE.Color();
-  const sand = new THREE.Color(0xa8946a), mud = new THREE.Color(0x3a3424);
+  const sand = new THREE.Color(0xa8946a), mud = new THREE.Color(0x3a3424), paving = new THREE.Color(0x8e887c);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
     const h = height(x, z);
     pos.setY(i, h);
     const n = Math.sin(x * 0.13) * Math.cos(z * 0.11) * 0.5 + 0.5 + (wrand() - 0.5) * 0.25;
     c.copy(g1).lerp(g2, clamp(n, 0, 1));
-    c.lerp(ash, smooth(-750, -860, z) * 0.85);
+    c.lerp(ash, smooth(ASH_Z + 40, ASH_Z - 70, z) * 0.85);
     c.lerp(dirt, (1 - smooth(2.5, 5, roadDist(x, z))) * 0.85);
-    c.lerp(plaza, (1 - smooth(TOWN_R - 4, TOWN_R + 2, townDist(x, z))) * 0.7);
+    const td = townDist(x, z);
+    c.lerp(plaza, (1 - smooth(-4, 2, td)) * 0.7);
+    if (td < 0) { const t = townAt(x, z); if (t && t.city) c.lerp(paving, 0.45 * smooth(0, -6, td)); }
     c.lerp(arenaC, (1 - smooth(ARENA.r - 1, ARENA.r + 4, arenaDist(x, z))) * 0.9);
     c.lerp(campC, (1 - smooth(NINJA_R - 2, NINJA_R + 3, ninjaDist(x, z))) * 0.75);
     const ld = lakeDist(x, z);
@@ -270,7 +274,7 @@ function buildVegetation() {
     dummy.updateMatrix();
     list.push(dummy.matrix.clone());
   };
-  const okSpot = (x, z, margin = 0) => roadDist(x, z) > 7 + margin && townDist(x, z) > TOWN_R + 3
+  const okSpot = (x, z, margin = 0) => roadDist(x, z) > 7 + margin && townDist(x, z) > 3
     && arenaDist(x, z) > ARENA.r + 6 && ninjaDist(x, z) > NINJA_R + 5 && lakeDist(x, z) > 3 && height(x, z) < 40;
 
   for (let i = 0; i < 9000; i++) {
@@ -278,10 +282,10 @@ function buildVegetation() {
     if (!okSpot(x, z)) continue;
     const inBounds = x > BOUNDS.minX && x < BOUNDS.maxX && z > BOUNDS.minZ && z < BOUNDS.maxZ;
     const r = wrand();
-    if (z < -760) {
+    if (z < ASH_Z + 20) {
       if (r < 0.12) { place(sets.dead, x, z, wr(0.8, 1.4)); if (inBounds) addCollider(x, z, 0.5); }
       else if (r < 0.2) { place(sets.rock, x, z, wr(0.6, 2.2)); if (inBounds) addCollider(x, z, 1.0); }
-    } else if (townDist(x, z) < 80 && r < 0.12) {
+    } else if (townDist(x, z) < 50 && r < 0.12) {
       place(sets.sakura, x, z, wr(0.8, 1.2)); if (inBounds) addCollider(x, z, 0.5);
     } else if (z < -20 && z > -240 && r < 0.05) {
       for (let k = 0; k < 9; k++) {
@@ -490,20 +494,25 @@ function buildTown(t) {
   let dx = next[0] - prev[0], dz = next[1] - prev[1];
   const dl = Math.hypot(dx, dz); dx /= dl; dz /= dl;
   const px = -dz, pz = dx;
+  const at = (f, sd) => [t.x + dx * f + px * sd, t.z + dz * f + pz * sd];
 
-  // Shop stall with its merchant.
-  const sx = t.x + px * 12, sz = t.z + pz * 12;
-  const stall = placeObj(makeShopStall([0x24467a, 0x2a6a4a, 0x6a2a5a, 0x222222][t.index]), sx, sz, facing(sx, sz, t.x, t.z));
-  const merchant = makeHumanoid({ cloth: VILLAGER_COLORS[t.index + 2], cloth2: 0x3a3028, hat: 'bun' });
-  merchant.root.position.set(0, 0, -0.3);
-  stall.add(merchant.root);
-  staticNPCs.push(merchant);
-  addCollider(sx, sz, 2.4);
-  const front = new THREE.Vector3(0, 0, 2.6).applyMatrix4(stall.matrixWorld);
-  interactables.push({ kind: 'shop', town: t, x: front.x, z: front.z });
+  // Shop stalls with their merchants. Cities have two: a market and a master forge.
+  const shopSpots = t.city ? [at(6, 12), at(-9, 12)] : [at(0, 12)];
+  const clothColors = [0x24467a, 0x2a6a4a, 0x6a2a5a, 0x222222, 0x7a4a1a, 0x3a1a1a];
+  t.shops.forEach((shop, k) => {
+    const [sx, sz] = shopSpots[k];
+    const stall = placeObj(makeShopStall(clothColors[(t.index + k * 3) % clothColors.length]), sx, sz, facing(sx, sz, t.x + dx * (k ? -9 : 6), t.z + dz * (k ? -9 : 6)));
+    const merchant = makeHumanoid({ cloth: VILLAGER_COLORS[(t.index + 2 + k) % VILLAGER_COLORS.length], cloth2: 0x3a3028, hat: k ? 'band' : 'bun' });
+    merchant.root.position.set(0, 0, -0.3);
+    stall.add(merchant.root);
+    staticNPCs.push(merchant);
+    addCollider(sx, sz, 2.4);
+    const front = new THREE.Vector3(0, 0, 2.6).applyMatrix4(stall.matrixWorld);
+    interactables.push({ kind: 'shop', town: t, shop, x: front.x, z: front.z });
+  });
 
   // Shrine (rest, save & travel).
-  const hx = t.x - px * 12, hz = t.z - pz * 12;
+  const [hx, hz] = at(0, -12);
   const shrine = placeObj(makeShrine(), hx, hz, facing(hx, hz, t.x, t.z));
   addCollider(hx, hz, 2.0);
   const sf = new THREE.Vector3(0, 0, 2.9).applyMatrix4(shrine.matrixWorld);
@@ -512,70 +521,159 @@ function buildTown(t) {
   t.spawn = new THREE.Vector3(t.x - dx * 5, 0, t.z - dz * 5);
   t.spawnFacing = Math.atan2(dx, dz);
 
-  // Village elder.
-  const ex = t.x + dx * 6 + px * 4, ez = t.z + dz * 6 + pz * 4;
-  const elder = makeHumanoid({ cloth: 0x6b5a7a, cloth2: 0x4a3f55, hat: 'elder', weapon: 'staff', skin: 0xd6a37e });
+  // Village elder (a magistrate or lord in the cities).
+  const [ex, ez] = at(6, -5);
+  const elder = makeHumanoid(t.city
+    ? { cloth: 0x2a2a4a, cloth2: 0x1a1a2a, hat: 'kabuto', armor: 0x5a1a1a, weapon: 'staff', skin: 0xd6a37e }
+    : { cloth: 0x6b5a7a, cloth2: 0x4a3f55, hat: 'elder', weapon: 'staff', skin: 0xd6a37e });
   placeObj(elder.root, ex, ez, facing(ex, ez, t.x, t.z), false);
   elder.armR.rotation.x = -0.4;
   staticNPCs.push(elder);
   addCollider(ex, ez, 0.5);
   interactables.push({ kind: 'elder', town: t, x: ex, z: ez });
 
-  // Houses ring.
+  const keepClear = [[...at(0, 12), 8], [...at(-9, 12), 8], [hx, hz, 8], [ex, ez, 4]];
+  if (t.city) buildCity(t, dx, dz, px, pz, at, keepClear);
+  else buildVillage(t, prev, next, keepClear);
+
+  // Townsfolk wandering the streets.
+  const crowd = t.city ? 14 : 4;
+  for (let k = 0; k < crowd; k++) {
+    const rig = makeHumanoid({
+      cloth: VILLAGER_COLORS[(k + t.index * 2) % VILLAGER_COLORS.length], cloth2: 0x3a3430,
+      hat: k % 3 === 0 ? 'kasa' : k % 2 ? 'bun' : null, skin: [0xe0b48a, 0xc99a72, 0xd8a880][k % 3], scale: wr(0.85, 1.0),
+    });
+    const a = wr(0, Math.PI * 2), rr = wr(0, t.r * 0.4);
+    const v = { rig, town: t, pos: new THREE.Vector3(t.x + Math.cos(a) * rr, 0, t.z + Math.sin(a) * rr), target: null, wait: wr(0, 3), facing: 0 };
+    scene.add(rig.root);
+    villagers.push(v);
+  }
+}
+
+// Houses in one merged block: dozens of houses cost a handful of draw calls.
+function houseBlock(t, spots) {
+  const block = new THREE.Group();
+  const sizes = [[5, 4], [6, 4.5], [4.5, 4]];
+  for (const [x, z, k, tall] of spots) {
+    const [w, d] = sizes[k % sizes.length];
+    const h = makeHouse(k % 4 === 3 ? 0xf4eee0 : t.wall, t.roof, w, d);
+    h.position.set(x, height(x, z), z);
+    h.rotation.y = facing(x, z, t.x, t.z);
+    if (tall) h.scale.y = 1.3;
+    block.add(h);
+    addCollider(x, z, Math.max(w, d) * 0.62);
+  }
+  scene.add(block);
+  mergeStatic(block);
+}
+
+function buildVillage(t, prev, next, keepClear) {
+  const spots = [];
   const n = 14;
   for (let k = 0; k < n; k++) {
     const a = (k / n) * Math.PI * 2 + wr(-0.1, 0.1);
     const rr = wr(19, 25);
     const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
-    if (roadDist(x, z) < 7.5 || Math.hypot(x - sx, z - sz) < 8 || Math.hypot(x - hx, z - hz) < 8) continue;
-    const w = wr(4.5, 6), d = wr(3.8, 4.6);
-    placeObj(makeHouse(t.wall, t.roof, w, d), x, z, facing(x, z, t.x, t.z));
-    addCollider(x, z, Math.max(w, d) * 0.62);
+    if (roadDist(x, z) < 7.5 || keepClear.some(([cx, cz, r]) => Math.hypot(x - cx, z - cz) < r)) continue;
+    spots.push([x, z, k, false]);
   }
+  houseBlock(t, spots);
 
-  // Torii gates where the road enters and leaves the town.
+  // Torii gates where the road enters and leaves the village.
   for (const p of [prev, next]) {
     let ox = p[0] - t.x, oz = p[1] - t.z;
     const ol = Math.hypot(ox, oz); ox /= ol; oz /= ol;
-    const gx = t.x + ox * (TOWN_R - 2), gz = t.z + oz * (TOWN_R - 2);
-    placeObj(makeTorii(1, t.index === 3 ? 0x3a3a3a : 0xc0392b), gx, gz, Math.atan2(ox, oz));
+    const gx = t.x + ox * (t.r - 2), gz = t.z + oz * (t.r - 2);
+    placeObj(makeTorii(1, 0xc0392b), gx, gz, Math.atan2(ox, oz));
     addCollider(gx - oz * 2.6, gz + ox * 2.6, 0.4);
     addCollider(gx + oz * 2.6, gz - ox * 2.6, 0.4);
     for (const s of [-1, 1]) {
-      const lx = t.x + ox * (TOWN_R - 8) - oz * 4 * s, lz = t.z + oz * (TOWN_R - 8) + ox * 4 * s;
+      const lx = t.x + ox * (t.r - 8) - oz * 4 * s, lz = t.z + oz * (t.r - 8) + ox * 4 * s;
       placeObj(makeStoneLantern(true), lx, lz, 0);
       addCollider(lx, lz, 0.5);
     }
   }
+}
 
-  // Kurogane Fort gets a wooden palisade.
-  if (t.index === 3) {
-    const stakes = [];
-    const dummy = new THREE.Object3D();
-    for (let k = 0; k < 140; k++) {
-      const a = (k / 140) * Math.PI * 2;
-      const x = t.x + Math.cos(a) * (TOWN_R + 1), z = t.z + Math.sin(a) * (TOWN_R + 1);
-      if (roadDist(x, z) < 5) continue;
-      dummy.position.set(x, 0, z); dummy.rotation.set(0, a, 0); dummy.scale.set(1, wr(0.9, 1.15), 1);
-      dummy.updateMatrix(); stakes.push(dummy.matrix.clone());
-      addCollider(x, z, 0.8);
+// A walled city: gatehouses on the road, a castle keep, a pagoda, a market street,
+// and rings of houses filling the districts.
+function buildCity(t, dx, dz, px, pz, at, keepClear) {
+  const R = t.r;
+  // Landmarks on either side of the main street.
+  const [cx, cz] = at(-8, R * 0.52);
+  placeObj(makeCastle(t.roof), cx, cz, facing(cx, cz, t.x, t.z));
+  addCollider(cx, cz, 12.5);
+  const [gx2, gz2] = at(18, -R * 0.5);
+  placeObj(makePagoda(t.roof), gx2, gz2, 0.3);
+  addCollider(gx2, gz2, 5);
+  keepClear.push([cx, cz, 20], [gx2, gz2, 10]);
+
+  // City wall with gatehouses where the road passes through.
+  const wall = new THREE.Group();
+  const N = 50, segLen = (2 * Math.PI * R) / N;
+  for (let k = 0; k < N; k++) {
+    const a = (k / N) * Math.PI * 2;
+    const x = t.x + Math.cos(a) * R, z = t.z + Math.sin(a) * R;
+    if (roadDist(x, z) < 8) continue;
+    const w = makeCityWall(segLen, t.roof);
+    w.position.set(x, height(x, z), z);
+    w.rotation.y = -a + Math.PI / 2;
+    wall.add(w);
+    const tx = -Math.sin(a), tz = Math.cos(a);
+    addCollider(x + tx * segLen / 4, z + tz * segLen / 4, 2.7);
+    addCollider(x - tx * segLen / 4, z - tz * segLen / 4, 2.7);
+  }
+  scene.add(wall);
+  mergeStatic(wall);
+  const i = TOWN_IDX[t.index];
+  for (const p of [PATH[i - 1], PATH[i + 1]]) {
+    let ox = p[0] - t.x, oz = p[1] - t.z;
+    const ol = Math.hypot(ox, oz); ox /= ol; oz /= ol;
+    const gx = t.x + ox * R, gz = t.z + oz * R;
+    placeObj(makeGatehouse(t.roof), gx, gz, Math.atan2(ox, oz));
+    addCollider(gx - oz * 6.8, gz + ox * 6.8, 3.2);
+    addCollider(gx + oz * 6.8, gz - ox * 6.8, 3.2);
+  }
+
+  // Market street: stalls and lanterns lining the road through the city.
+  const street = new THREE.Group();
+  const stallColors = [0x7a2a1a, 0x24467a, 0x2a6a4a, 0x6a2a5a, 0x8a6a1a];
+  for (let f = -R + 14, k = 0; f < R - 12; f += 10, k++) {
+    if (Math.abs(f) < 16) continue;
+    for (const sd of [-1, 1]) {
+      const [x, z] = at(f, sd * 7.5);
+      if (keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
+      if ((k + (sd > 0 ? 1 : 0)) % 2 === 0) {
+        const st = makeShopStall(stallColors[(k + sd + 5) % stallColors.length]);
+        st.position.set(x, height(x, z), z);
+        st.rotation.y = Math.atan2(-px * sd, -pz * sd);
+        street.add(st);
+        addCollider(x, z, 2.3);
+      } else {
+        const l = makeStoneLantern(true);
+        l.position.set(x, height(x, z), z);
+        street.add(l);
+        addCollider(x, z, 0.5);
+      }
     }
-    const im = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.4, 4.2, 6).translate(0, 2.1, 0), smat(0x4a3424), stakes.length);
-    stakes.forEach((m, k) => im.setMatrixAt(k, m));
-    im.castShadow = true;
-    scene.add(im);
   }
+  scene.add(street);
+  mergeStatic(street);
 
-  // Villagers who wander the plaza.
-  for (let k = 0; k < 4; k++) {
-    const rig = makeHumanoid({
-      cloth: VILLAGER_COLORS[(k + t.index * 2) % VILLAGER_COLORS.length], cloth2: 0x3a3430,
-      hat: k % 2 ? 'bun' : null, skin: [0xe0b48a, 0xc99a72, 0xd8a880][k % 3], scale: wr(0.85, 1.0),
-    });
-    const v = { rig, town: t, pos: new THREE.Vector3(t.x + wr(-10, 10), 0, t.z + wr(-10, 10)), target: null, wait: wr(0, 3), facing: 0 };
-    scene.add(rig.root);
-    villagers.push(v);
+  // Districts: rings of houses, keeping the main street and landmarks clear.
+  const spots = [];
+  let k = 0;
+  for (let rr = 20; rr < R - 7; rr += 10.5) {
+    const n = Math.floor((2 * Math.PI * rr) / 10.5);
+    for (let j = 0; j < n; j++) {
+      const a = (j / n) * Math.PI * 2 + (rr * 0.37) + wr(-0.03, 0.03);
+      const x = t.x + Math.cos(a) * rr, z = t.z + Math.sin(a) * rr;
+      k++;
+      if (roadDist(x, z) < 11 || keepClear.some(([qx, qz, r]) => Math.hypot(x - qx, z - qz) < r)) continue;
+      spots.push([x, z, k, wrand() < 0.3]);
+    }
   }
+  houseBlock(t, spots);
 }
 
 function buildArena() {
@@ -634,9 +732,9 @@ function buildGrass() {
   for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0);
   const mats = [];
   const dummy = new THREE.Object3D();
-  for (let i = 0; i < 360000 && mats.length < 110000; i++) {
-    const x = wr(BOUNDS.minX, BOUNDS.maxX), z = wr(-760, BOUNDS.maxZ);
-    if (roadDist(x, z) < 3.5 || townDist(x, z) < TOWN_R - 3 || ninjaDist(x, z) < NINJA_R || arenaDist(x, z) < ARENA.r + 4 || lakeDist(x, z) < 0) continue;
+  for (let i = 0; i < 560000 && mats.length < 170000; i++) {
+    const x = wr(BOUNDS.minX, BOUNDS.maxX), z = wr(ASH_Z + 30, BOUNDS.maxZ);
+    if (roadDist(x, z) < 3.5 || townDist(x, z) < -3 || ninjaDist(x, z) < NINJA_R || arenaDist(x, z) < ARENA.r + 4 || lakeDist(x, z) < 0) continue;
     const h = height(x, z);
     if (h > 9) continue;
     dummy.position.set(x, h - 0.05, z);
@@ -719,7 +817,7 @@ function buildSky() {
       const a = (k / count) * Math.PI * 2 + wr(-0.08, 0.08);
       const h = wr(hMin, hMax), r = wr(h * 0.9, h * 1.5);
       const m = new THREE.Mesh(lumpy(new THREE.ConeGeometry(r, h, 24, 6), r * 0.08, k), mat);
-      m.position.set(Math.cos(a) * radius, h / 2 - 20, -450 + Math.sin(a) * radius * 1.15);
+      m.position.set(Math.cos(a) * radius, h / 2 - 20, (BOUNDS.minZ + BOUNDS.maxZ) / 2 + Math.sin(a) * radius * 1.6);
       m.rotation.y = wr(0, 6);
       ranges.add(m);
     }
@@ -730,11 +828,11 @@ function buildSky() {
   // Oni Mountain looms over the far north, visible from anywhere.
   const mountain = new THREE.Mesh(new THREE.CylinderGeometry(45, 280, 320, 28, 1, true),
     new THREE.MeshLambertMaterial({ color: 0x2b2120, fog: false, flatShading: true }));
-  mountain.position.set(0, 140, -1250);
+  mountain.position.set(0, 140, ARENA.z - 330);
   scene.add(mountain);
   const crater = new THREE.Mesh(new THREE.CircleGeometry(44, 28).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0xff5a1a, fog: false }));
-  crater.position.set(0, 300.5, -1250);
+  crater.position.set(0, 300.5, ARENA.z - 330);
   scene.add(crater);
   overworldOnly.push(mountain, crater);
 }

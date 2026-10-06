@@ -1,21 +1,29 @@
 // Static game data: the road, towns, bases, enemies and shop items.
 
-// The Tokaido road, south (start) to north (Oni Mountain). Towns sit on path points.
+// The Tokaido road, south (start) to north (Oni Mountain). Settlements sit on path
+// points: two small towns, then a great city, then two towns, then another city.
 export const PATH = [
-  [0, 60], [0, 0], [25, -130], [60, -260], [10, -380],
-  [-120, -500], [-70, -620], [40, -740], [15, -840], [0, -920],
+  [0, 60], [0, 0], [25, -130], [60, -260], [25, -390], [0, -540],
+  [-60, -680], [-120, -800], [-90, -920], [-40, -1030], [15, -1160], [40, -1310],
+  [20, -1450], [0, -1570],
 ];
-export const TOWN_IDX = [1, 3, 5, 7];
+export const TOWN_IDX = [1, 3, 5, 7, 9, 11];
 export const TOWN_R = 30;
-export const ARENA = { x: 0, z: -920, r: 28 };
-export const BOUNDS = { minX: -320, maxX: 320, minZ: -990, maxZ: 100 };
+export const CITY_R = 72;
+export const ARENA = { x: 0, z: -1570, r: 28 };
+export const BOUNDS = { minX: -320, maxX: 320, minZ: -1640, maxZ: 100 };
+// North of here the land is scorched by Oni Mountain.
+export const ASH_Z = -1390;
 
-// Region between town i and town i+1 (the last one leads to the arena).
+// The road between settlement i and i+1 (the last leg leads to the Demon King).
+// tier picks the enemy mix; danger is the star rating shown on screen.
 export const REGIONS = [
-  { name: 'Bamboo Road', danger: 1 },
-  { name: 'Riverlands', danger: 2 },
-  { name: 'Stone Pass', danger: 3 },
-  { name: 'Ashen Wastes', danger: 4 },
+  { name: 'Bamboo Road', danger: 1, tier: 0 },
+  { name: 'Riverlands', danger: 2, tier: 1 },
+  { name: 'Capital Plains', danger: 2, tier: 1 },
+  { name: 'Stone Pass', danger: 3, tier: 2 },
+  { name: 'Moonlit Forest', danger: 3, tier: 2 },
+  { name: 'Ashen Wastes', danger: 4, tier: 3 },
 ];
 
 // Lakes sit away from the road. The water surface is at WATER_Y.
@@ -24,15 +32,16 @@ export const LAKES = [
   { x: -62, z: -45, r: 18 },
   { x: 128, z: -245, r: 24 },
   { x: -215, z: -560, r: 26 },
+  { x: 150, z: -960, r: 22 },
 ];
 
 // One ninja base per region. Each guards a sealed portal to a demon fortress.
 export const NINJA_R = 24;
 export const NINJA_BASES = [
   { name: 'Kage Hideout', x: -75, z: -150, master: 'Master Kirigakure' },
-  { name: 'Mist Fang Camp', x: 125, z: -405, master: 'Master Kasumi' },
-  { name: 'Iron Shadow Fort', x: -185, z: -660, master: 'Master Tetsukage' },
-  { name: 'Black Lotus Stronghold', x: 135, z: -850, master: 'Master Kokuren' },
+  { name: 'Mist Fang Camp', x: 140, z: -410, master: 'Master Kasumi' },
+  { name: 'Iron Shadow Fort', x: -215, z: -900, master: 'Master Tetsukage' },
+  { name: 'Black Lotus Stronghold', x: 140, z: -1150, master: 'Master Kokuren' },
 ];
 
 // Demon fortresses float on lava islands outside the overworld (x > 600).
@@ -45,50 +54,79 @@ export const DEMON_BASES = [
   { name: 'Fortress of Kuro', x: 760, z: -830, warlord: 'Kuro, the Black Flame', reward: 'yamata' },
 ];
 
+// Every settlement has one or more shops. Cities (city: true) are walled, with a castle,
+// a pagoda, a market street and a master swordsmith.
 export const TOWNS = [
   {
     name: 'Sakura Village', wall: 0xeadfc8, roof: 0x3d4656,
-    shopName: 'Hanami General Store', merchant: 'Old Tomoe, shopkeeper',
-    stock: ['potion', 'w:steel', 'w:kaze', 'a:leather'],
+    shops: [{ shopName: 'Hanami General Store', merchant: 'Old Tomoe, shopkeeper', stock: ['potion', 'w:steel', 'w:kaze', 'a:leather'] }],
     elder: [
       'Ronin, thank the heavens you came. Demons pour down from Oni Mountain in the far north.',
       'Their master is Shuten-doji, the Demon King. No blade in this village can stand against him.',
-      'Follow the road north to Kawaguchi. West of the bamboo groves the Kage ninja clan has made a hideout. They guard a portal to a demon fortress &mdash; defeat their master to break its seal.',
+      'Follow the road north to Kawaguchi, and beyond it the great capital, Miyako. West of the bamboo groves the Kage ninja clan guards a portal to a demon fortress &mdash; defeat their master to break its seal.',
       'Hold Q to block. Block just as a blow lands to parry it and leave your foe open.',
     ],
   },
   {
     name: 'Kawaguchi', wall: 0xe2d2b0, roof: 0x4a3326,
-    shopName: 'Riverside Smithy', merchant: 'Genzo the smith',
-    stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'c:stamina'],
+    shops: [{ shopName: 'Riverside Smithy', merchant: 'Genzo the smith', stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'c:stamina'] }],
     elder: [
       'Red oni stalk the riverlands now. They hit hard but swing slow &mdash; parry them, or roll through the blow.',
       'Every strike you land fills your Ki. When it is full, press X: draw like lightning and cut down every foe around you in a single breath. We call it Iaijutsu.',
-      'The Mist Fang ninja camp lies east of the river bend. Ishiyama lies to the north-west.',
+      'The capital, Miyako, lies north. Its walls still hold. The Mist Fang ninja camp hides east of the road.',
+    ],
+  },
+  {
+    name: 'Miyako, the Capital', city: true, wall: 0xf2ece0, roof: 0x2f3a4a,
+    shops: [
+      { shopName: 'Grand Market of Miyako', merchant: 'Merchant Guild of the Capital', stock: ['potion', 'elixir', 'w:tama', 'w:frost', 'a:iron', 'a:oyoroi', 'c:stamina', 'c:vitality'] },
+      { shopName: 'Forge of Masamune', merchant: 'Masamune, master swordsmith', stock: ['w:kogarasu', 'w:mura', 'w:nodachi', 'w:inferno'] },
+    ],
+    elderTitle: 'Magistrate of Miyako',
+    elder: [
+      'Welcome to Miyako, ronin. The capital has not fallen, but the demons test our walls every night.',
+      'Masamune\'s forge is here. His Kogarasu-maru is light and quick; no finer blade is sold on this road.',
+      'North lie Ishiyama and the moon village of Tsukimura, then Kurogane, the castle city at the edge of the Ashen Wastes.',
     ],
   },
   {
     name: 'Ishiyama', wall: 0xcfc8bc, roof: 0x2f3b3a,
-    shopName: 'Stoneworks Armory', merchant: 'Master Hideyoshi',
-    stock: ['potion', 'elixir', 'w:nodachi', 'w:inferno', 'w:mura', 'a:oyoroi', 'c:vitality'],
+    shops: [{ shopName: 'Stoneworks Armory', merchant: 'Master Hideyoshi', stock: ['potion', 'elixir', 'w:nodachi', 'w:inferno', 'a:oyoroi', 'c:vitality'] }],
     elder: [
       'Blue oni guard the stone pass, and worse &mdash; oni captains clad in black. Their hides shrug off quick cuts.',
       'Use heavy strikes (right-click) on them, and press Tab to lock your gaze on a single foe.',
-      'The Iron Shadow ninjas hold a fort west of the pass. Kurogane Fort is the last stronghold before the Ashen Wastes.',
+      'The Iron Shadow ninjas hold a fort west of the pass. Tsukimura lies beyond.',
     ],
   },
   {
-    name: 'Kurogane Fort', wall: 0xb9b1a6, roof: 0x241d1d,
-    shopName: 'Fortress Quartermaster', merchant: 'Captain Ayame',
-    stock: ['potion', 'elixir', 'w:raijin', 'w:onikiri', 'a:dragon', 'c:regen'],
+    name: 'Tsukimura', wall: 0xd8d4c8, roof: 0x34304a,
+    shops: [{ shopName: 'Moon Gate Trader', merchant: 'Widow Aoi', stock: ['potion', 'elixir', 'w:raijin', 'a:dragon', 'c:regen'] }],
     elder: [
-      'Beyond our gate lie the Ashen Wastes, and at their end the shrine where Shuten-doji waits.',
-      'Ayame keeps Onikiri, the Demon-Cutter, forged for this one fight. The warlords of the demon fortresses carry blades stranger still.',
+      'Our village watches the moon, and lately it rises red over Oni Mountain.',
+      'The Black Lotus ninjas keep their stronghold east of the forest road. Their master is the last seal.',
+      'Kurogane Castle City is the last great wall before the Demon King. Rest there before the end.',
+    ],
+  },
+  {
+    name: 'Kurogane Castle City', city: true, wall: 0xc9c2b6, roof: 0x241d1d,
+    shops: [
+      { shopName: 'Fortress Quartermaster', merchant: 'Captain Ayame', stock: ['potion', 'elixir', 'w:onikiri', 'a:dragon', 'c:regen'] },
+      { shopName: 'Black Iron Forge', merchant: 'Old Yasutsuna', stock: ['w:dojigiri', 'w:onikiri', 'w:raijin'] },
+    ],
+    elderTitle: 'Lord of Kurogane',
+    elder: [
+      'Beyond our walls lie the Ashen Wastes, and at their end the shrine where Shuten-doji waits.',
+      'Old Yasutsuna keeps Dojigiri, the blade that cut the Demon King once, long ago. It hungers to do it again.',
       'When the Demon King slams the earth, a red ring marks the blow. It cannot be blocked &mdash; roll or jump. Go, ronin. End this.',
     ],
   },
 ];
-TOWNS.forEach((t, i) => { t.index = i; t.x = PATH[TOWN_IDX[i]][0]; t.z = PATH[TOWN_IDX[i]][1]; });
+TOWNS.forEach((t, i) => {
+  t.index = i; t.x = PATH[TOWN_IDX[i]][0]; t.z = PATH[TOWN_IDX[i]][1];
+  t.r = t.city ? CITY_R : TOWN_R;
+});
+// Save files from before the cities were added stored towns by their old position.
+export const OLD_TOWN_ORDER = [0, 1, 3, 5];
 
 // speed scales attack speed, reach adds range, len scales the model.
 // effect: burn (fire damage over time), frost (slows), shock (chains to nearby foes),
@@ -104,6 +142,9 @@ export const WEAPONS = {
   mura:      { name: 'Muramasa', atk: 34, price: 720, color: 0xffb0b0, glow: 0x8a1010, effect: 'leech', desc: 'Leech: drinks blood to heal you.' },
   raijin:    { name: "Raijin's Thunder", atk: 40, price: 950, color: 0xfff6a0, glow: 0xffd000, effect: 'shock', style: 'jagged', desc: 'Shock: lightning jumps to nearby foes.' },
   onikiri:   { name: 'Onikiri, Demon-Cutter', atk: 46, price: 1100, color: 0xbff0ff, glow: 0x2a8fb0, effect: 'demonbane', desc: 'Demonbane: +50% damage to demons.' },
+  // City forges only.
+  kogarasu:  { name: 'Kogarasu-maru', atk: 30, price: 560, color: 0xe0e8ff, glow: 0x203050, speed: 1.15, desc: 'The little crow. Light, quick and razor-keen. Sold only in Miyako.' },
+  dojigiri:  { name: 'Dojigiri Yasutsuna', atk: 54, price: 1700, color: 0xfff0d0, glow: 0xc08020, effect: 'demonbane', len: 1.1, desc: 'The blade that cut down Shuten-doji once before. Sold only in Kurogane.' },
   // Warlord rewards: found in demon fortress chests, never sold.
   shadow:    { name: 'Shadowfang', atk: 30, price: 0, color: 0x404050, glow: 0x6a2aff, effect: 'leech', speed: 1.15, desc: 'Taken from Gozu. Fast, and leeches life.', reward: true },
   bloodmoon: { name: 'Blood Moon', atk: 42, price: 0, color: 0xff3030, glow: 0xc00000, effect: 'burn', style: 'jagged', desc: "Taken from Mezu. Burns with a crimson fire.", reward: true },
