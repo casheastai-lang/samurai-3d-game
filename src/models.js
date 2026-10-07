@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import {
   grainTex, clothTex, plasterTex, woodTex, roofTex, stoneTex, shojiTex, tigerTex, tiled,
-  tatamiTex, scrollTex,
+  tatamiTex, scrollTex, protectorTex,
 } from './textures.js';
 
 // Low-sided cones and cylinders read as faceted shapes, so give them flat normals.
@@ -308,18 +308,63 @@ export function makeHumanoid(o = {}) {
   add(head, new THREE.SphereGeometry(0.235, 19, 14), skin, 0, 0, 0).scale.set(0.92, 1.08, 1);
   add(head, new THREE.SphereGeometry(0.15, 14, 9), skin, 0, -0.1, 0.07).scale.set(1, 0.8, 1);
   add(head, new THREE.ConeGeometry(0.035, 0.09, 12), skin, 0, -0.02, 0.235).rotation.x = Math.PI / 2;
-  const eyeWhite = M(0xf0ece4, { roughness: 0.25 }), pupil = M(0x140c08, { roughness: 0.15 });
+  // Big anime eyes: white, a tall colored iris, a dark pupil and a bright catch-light.
+  const eyeWhite = M(0xf6f2ea, { roughness: 0.3 }), iris = M(o.eyes ?? 0x3a2414, { roughness: 0.2 }), pupil = M(0x0a0606, { roughness: 0.15 });
+  const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });
   for (const sx of [-1, 1]) {
     add(head, new THREE.SphereGeometry(0.05, 8, 6), skin, sx * 0.215, -0.01, 0).scale.set(0.45, 1, 0.8);
-    add(head, new THREE.SphereGeometry(0.03, 8, 6), eyeWhite, sx * 0.083, 0.03, 0.197).scale.z = 0.5;
-    add(head, new THREE.SphereGeometry(0.017, 8, 6), pupil, sx * 0.083, 0.03, 0.211);
-    add(head, new THREE.BoxGeometry(0.085, 0.018, 0.02), hairM, sx * 0.085, 0.085, 0.208).rotation.z = sx * -0.15;
+    add(head, new THREE.SphereGeometry(0.05, 12, 10), eyeWhite, sx * 0.085, 0.02, 0.192).scale.set(0.85, 1.12, 0.32);
+    add(head, new THREE.SphereGeometry(0.034, 12, 10), iris, sx * 0.082, 0.015, 0.205).scale.set(0.9, 1.25, 0.32);
+    add(head, new THREE.SphereGeometry(0.016, 8, 6), pupil, sx * 0.082, 0.012, 0.213).scale.set(0.9, 1.2, 0.3);
+    add(head, new THREE.SphereGeometry(0.009, 6, 5), shine, sx * 0.082 + 0.013, 0.038, 0.218, false);
+    add(head, new THREE.BoxGeometry(0.09, 0.02, 0.02), hairM, sx * 0.088, 0.1, 0.205).rotation.z = sx * -0.18;
   }
   const hair = () => {
     add(head, new THREE.SphereGeometry(0.245, 17, 7, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM, 0, 0.02, -0.02).scale.set(0.95, 1.08, 1.02);
-    add(head, new THREE.CapsuleGeometry(0.045, 0.14, 6, 10), hairM, 0, 0.26, -0.04).rotation.x = Math.PI / 2 - 0.3;
+    const style = o.hairStyle ?? 'topknot';
+    const bangs = n => {
+      for (let i = 0; i < n; i++) {
+        const x = (i - (n - 1) / 2) * 0.085;
+        const b = add(head, new THREE.ConeGeometry(0.048, 0.15, 5), hairM, x, 0.13, 0.19);
+        b.rotation.set(Math.PI - 0.35, 0, x * 1.4);
+      }
+    };
+    if (style === 'topknot') {
+      add(head, new THREE.CapsuleGeometry(0.045, 0.14, 6, 10), hairM, 0, 0.26, -0.04).rotation.x = Math.PI / 2 - 0.3;
+    } else if (style === 'spiky') {
+      // Wild spikes swept back and up, ninja style.
+      for (let i = 0; i < 11; i++) {
+        const a = (i / 11) * Math.PI * 1.6 - Math.PI * 0.8;
+        const up = 0.35 + (i % 3) * 0.25;
+        const sp = add(head, new THREE.ConeGeometry(0.075, 0.3, 6), hairM, Math.sin(a) * 0.17, 0.12 + up * 0.08, -Math.cos(a) * 0.15 - 0.02);
+        sp.rotation.set(-Math.cos(a) * (1.2 - up * 0.6) - 0.2, 0, -Math.sin(a) * (1.1 - up * 0.5));
+      }
+      bangs(4);
+    } else if (style === 'short') {
+      bangs(5);
+    } else if (style === 'long') {
+      add(head, new THREE.CapsuleGeometry(0.17, 0.32, 6, 12), hairM, 0, -0.2, -0.13).scale.set(1.1, 1, 0.55);
+      for (const sx of [-1, 1]) add(head, new THREE.CapsuleGeometry(0.05, 0.28, 5, 8), hairM, sx * 0.19, -0.12, 0.05);
+      bangs(3);
+    } else if (style === 'ponytail') {
+      add(head, new THREE.TorusGeometry(0.045, 0.018, 6, 12), M(0xc0392b), 0, 0.12, -0.24).rotation.x = 0.3;
+      const tail = add(head, new THREE.CapsuleGeometry(0.06, 0.34, 6, 10), hairM, 0, -0.08, -0.31);
+      tail.rotation.x = 0.35;
+      bangs(3);
+    }
   };
 
+  // A village forehead protector: a cloth band and an engraved steel plate.
+  if (o.protector) {
+    const band = M(o.protector.color ?? 0x1a1a2a, fabric());
+    const plateM = new THREE.MeshStandardMaterial({ map: protectorTex(o.protector.kanji), metalness: 0.75, roughness: 0.3 });
+    mats.push(plateM);
+    const lift = o.hat === 'ninja' ? 0.025 : 0;
+    add(head, new THREE.TorusGeometry(0.242 + lift, 0.028, 8, 28), band, 0, 0.1, 0).rotation.x = Math.PI / 2;
+    const plate = add(head, new THREE.BoxGeometry(0.2, 0.085, 0.025), plateM, 0, 0.1, 0.236 + lift);
+    plate.rotation.x = -0.12;
+    for (const sx of [-1, 1]) { const t = add(head, new THREE.BoxGeometry(0.04, 0.2, 0.012), band, sx * 0.05, -0.02, -0.25); t.rotation.z = sx * 0.25; }
+  }
   if (o.armor) {
     const lac = M(o.armor, { roughness: 0.32, metalness: 0.2, bumpMap: grainTex(), bumpScale: 0.3 });
     const cord = M(0xc9a24a, { roughness: 0.6 });

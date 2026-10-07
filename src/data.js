@@ -349,9 +349,12 @@ export const LOOK_OPTIONS = {
   cloth2: [0x24242e, 0x2a1010, 0x121216, 0x7d7f88, 0x3a3020, 0x1a1026, 0x4a3a2a, 0x2a3440],
   scarf: [0xa3231a, 0xd4a72c, 0x3a6ab8, 0xffffff, 0x2a8a4a, 0x9a3aff, 0x1a1a1a, 0xe07a2a],
   hat: ['kasa', 'none', 'band', 'kabuto', 'ninja', 'onimask'],
+  hairStyle: ['topknot', 'spiky', 'short', 'long', 'ponytail'],
+  eyes: [0x3a2414, 0x14100c, 0x2a5a9a, 0x2a7a4a, 0x8a5a1a, 0x9a2a2a, 0x6a3a9a, 0x8aa0b0],
 };
+export const HAIR_STYLE_NAMES = { topknot: 'Topknot', spiky: 'Spiky', short: 'Short', long: 'Long', ponytail: 'Ponytail' };
 export const HAT_NAMES = { kasa: 'Straw kasa', none: 'Topknot', band: 'Headband', kabuto: 'Kabuto helmet', ninja: 'Ninja hood', onimask: 'Oni mask' };
-export const DEFAULT_LOOK = { skin: 0xe0b48a, hair: 0x14100c, cloth: 0x1f2b4d, cloth2: 0x24242e, scarf: 0xa3231a, hat: 'kasa' };
+export const DEFAULT_LOOK = { skin: 0xe0b48a, hair: 0x14100c, cloth: 0x1f2b4d, cloth2: 0x24242e, scarf: 0xa3231a, hat: 'kasa', hairStyle: 'topknot', eyes: 0x3a2414 };
 
 // What each boss says before the duel. Choices:
 //   bow   - honor the duel: you start the fight with full Ki.

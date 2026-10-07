@@ -7,7 +7,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import {
   PATH, TOWN_IDX, ARENA, BOUNDS, REGIONS, TOWNS, WEAPONS, ARMORS, CHARMS, SKINS, ASH_Z, OLD_TOWN_ORDER, BOWS, STYLES,
   CONSUMABLES, ENEMIES, DEMON_TYPES, TIER_MIX, tierScale, xpNeeded,
-  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK, FROST,
+  NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK, FROST, HAIR_STYLE_NAMES,
   ELEMENTS, NW, NW_TOWNS, NEW_X,
 } from './data.js';
 import {
@@ -17,6 +17,7 @@ import {
 import {
   initFire, updateFire, setFireSites, setFireQuality, fireWall, fireWhirl, attachFlame, smoke, embers, impactSmoke, hazeShader, flashAllowed,
 } from './fireVfx.js';
+import { applyToonShading, InkScenePass } from './anime.js';
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
@@ -29,6 +30,8 @@ import {
 } from './fx.js';
 
 // ============================================================ Renderer, scene, post-processing
+// Anime look: cel shading is patched into every lit material before anything compiles.
+applyToonShading();
 const canvas = $('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -53,10 +56,12 @@ scene.add(sun, sun.target);
 
 // Post-processing renders into a multisampled HDR target so edges stay smooth.
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples: 4 }));
-composer.addPass(new RenderPass(scene, camera));
+// The scene is drawn with ink outlines traced from its depth (src/anime.js).
+const inkPass = new InkScenePass(scene, camera);
+composer.addPass(inkPass);
 // Heat haze over fire, from fireVfx.js (the material is shared so its uniforms stay live).
 composer.addPass(new ShaderPass(new THREE.ShaderMaterial(hazeShader)));
-const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.55, 1.0);
+const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.5, 0.95);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 // Final grade: a touch more saturation and contrast, warm highlights, soft vignette.
@@ -68,9 +73,10 @@ composer.addPass(new ShaderPass({
       vec4 c = texture2D(tDiffuse, vUv);
       vec3 col = c.rgb;
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col = mix(vec3(l), col, 1.12);
-      col = (col - 0.5) * 1.05 + 0.5;
-      col *= mix(vec3(0.97, 0.99, 1.03), vec3(1.04, 1.0, 0.95), smoothstep(0.2, 0.8, l));
+      // Anime grade: vivid color, cool blue shadows, warm clean highlights.
+      col = mix(vec3(l), col, 1.3);
+      col = (col - 0.5) * 1.08 + 0.5;
+      col *= mix(vec3(0.9, 0.97, 1.12), vec3(1.05, 1.0, 0.94), smoothstep(0.15, 0.75, l));
       vec2 d = vUv - 0.5;
       col *= 1.0 - dot(d, d) * 0.55;
       gl_FragColor = vec4(clamp(col, 0.0, 1.0), c.a);
@@ -139,7 +145,7 @@ window.addEventListener('resize', () => {
 
 // Sky palettes for the road, the ashen north, and the demon realm.
 const PAL = {
-  day:   { top: new THREE.Color(0x2f6bb8), hor: new THREE.Color(0xc4d8e6), sun: new THREE.Color(0xffe2b8), hemi: 0.55 },
+  day:   { top: new THREE.Color(0x2a78e0), hor: new THREE.Color(0xd2ecfa), sun: new THREE.Color(0xfff0d0), hemi: 0.6 },
   ash:   { top: new THREE.Color(0x3a1c18), hor: new THREE.Color(0x9a5a44), sun: new THREE.Color(0xff9a6a), hemi: 0.45 },
   realm: { top: new THREE.Color(0x120202), hor: new THREE.Color(0x6a1a0a), sun: new THREE.Color(0xff5a2a), hemi: 0.5 },
 };
@@ -351,7 +357,8 @@ function rebuildPlayerRig() {
     cloth: sk.cloth, cloth2: sk.cloth2, hat: sk.hat, scarf: sk.scarf,
     weapon: archer ? null : 'katana', sheath: !archer, grip: P.style === 'one' ? 'one' : 'two',
     bow: archer ? { color: B().color, glow: B().glow } : null,
-    skin: L.skin, hair: P.life && P.life.age >= 45 ? 0x9a9a9a : L.hair,
+    skin: L.skin, hair: P.life && P.life.age >= 45 ? 0x9a9a9a : L.hair, hairStyle: L.hairStyle, eyes: L.eyes,
+    protector: P.life?.graduated ? { color: 0x1a1a2a, kanji: ELEMENTS[P.life.village].kanji } : null,
     armor: sk.armor ?? ARMOR_COLORS[P.armor],
     blade: { color: w.color, glow: w.glow, len: w.len ?? 1, style: w.style },
   });
@@ -1999,6 +2006,7 @@ function openModal(html, kind) {
 }
 function closeModal() {
   ui = null;
+  talkTarget = null;
   modal.classList.add('hidden');
   modal.classList.remove('talkmode', 'side');
 }
@@ -2038,7 +2046,8 @@ modalBox.addEventListener('click', e => {
     case 'creatorDone':
       closeModal();
       save();
-      if (creatorFromStart) banner(TOWNS[P.lastTown].name, 'Talk to the elder, then head north', 3);
+      if (creatorMode === 'newlife') { banner(ELEMENTS[P.life.village].village, 'A new life begins. You are six years old.', 4); setTimeout(() => { if (!P.life.task) nextTask(); updateQuest(); }, 4200); }
+      else if (creatorFromStart) banner(TOWNS[P.lastTown].name, 'Talk to the elder, then head north', 3);
       break;
   }
 });
@@ -2398,9 +2407,10 @@ function talkChoice(c) {
 }
 
 // ============================================================ Character creator
-let creatorFromStart = false;
-function openCreator(fromStart) {
+let creatorFromStart = false, creatorMode = 'journey';
+function openCreator(fromStart, mode = 'journey') {
   creatorFromStart = fromStart;
+  creatorMode = mode;
   renderCreator();
 }
 function renderCreator() {
@@ -2408,13 +2418,18 @@ function renderCreator() {
   const row = (key, label) => `<div class="crow"><div class="clabel">${label}</div><div class="swatches">${LOOK_OPTIONS[key].map(c =>
     `<button class="sw ${L[key] === c ? 'on' : ''}" style="background:${hex(c)}" data-act="look|${key}:${c}" aria-label="${label} ${hex(c)}"></button>`).join('')}</div></div>`;
   const hats = LOOK_OPTIONS.hat.map(h => `<button class="hatbtn ${L.hat === h ? 'on' : ''}" data-act="look|hat:${h}">${HAT_NAMES[h]}</button>`).join('');
+  const hairStyles = LOOK_OPTIONS.hairStyle.map(h => `<button class="hatbtn ${(L.hairStyle ?? 'topknot') === h ? 'on' : ''}" data-act="look|hairStyle:${h}">${HAIR_STYLE_NAMES[h]}</button>`).join('');
+  const newLife = creatorMode === 'newlife';
   const styles = Object.entries(STYLES).map(([k, st]) => `<button class="stylecard ${P.style === k ? 'on' : ''}" data-act="style|${k}"><b>${st.name}</b><span>${st.desc}</span><em>Special: ${st.special}</em></button>`).join('');
-  const html = `<h2>Your samurai</h2>
+  const html = `<h2>${newLife ? 'Your new life' : 'Your samurai'}</h2>
+    ${newLife ? `<p class="sub">You wake in ${ELEMENTS[P.life.village].village} as a child. Who are you now?</p>` : ''}
     <div class="styles">${styles}</div>
     <p class="sub">Skin and hair apply to every outfit. Robe, hakama, scarf and headwear make up <b>Your Own Style</b>, which you can wear anytime from the inventory (I).</p>
-    ${row('skin', 'Skin')}${row('hair', 'Hair')}${row('cloth', 'Robe')}${row('cloth2', 'Hakama')}${row('scarf', 'Scarf')}
+    ${row('skin', 'Skin')}${row('eyes', 'Eyes')}${row('hair', 'Hair')}
+    <div class="crow"><div class="clabel">Hairstyle</div><div class="hats">${hairStyles}</div></div>
+    ${row('cloth', 'Robe')}${row('cloth2', 'Hakama')}${row('scarf', 'Scarf')}
     <div class="crow"><div class="clabel">Headwear</div><div class="hats">${hats}</div></div>
-    <div class="btns"><button data-act="creatorDone">${creatorFromStart ? 'Begin the journey' : 'Done'}</button></div>`;
+    <div class="btns"><button data-act="creatorDone">${newLife ? 'Begin your new life' : creatorFromStart ? 'Begin the journey' : 'Done'}</button></div>`;
   if (ui === 'creator') modalBox.innerHTML = html;
   else { openModal(html, 'creator'); modal.classList.add('side'); }
 }
@@ -2428,7 +2443,7 @@ function setStyle(key) {
 }
 function setLook(arg) {
   const [k, v] = arg.split(':');
-  P.look[k] = k === 'hat' ? v : Number(v);
+  P.look[k] = k === 'hat' || k === 'hairStyle' ? v : Number(v);
   if (!['skin', 'hair'].includes(k)) P.skin = 'custom';
   rebuildPlayerRig();
   renderCreator();
@@ -2491,9 +2506,13 @@ function startNewLife(k) {
     rebuildPlayerRig();
     fade.style.opacity = '0';
     ui = null;
-    banner(el.village, 'A new life begins. You are six years old.', 4);
-    setTimeout(() => { if (!P.life.task) nextTask(); save(); }, 4200);
+    // A new body for a new life: design your child before stepping out.
+    P.pastLook = { ...P.look };
+    P.look = { ...DEFAULT_LOOK, hat: 'none', hairStyle: 'spiky', cloth: LOOK_OPTIONS.cloth[k % LOOK_OPTIONS.cloth.length] };
+    P.skin = 'custom';
+    rebuildPlayerRig();
     save();
+    openCreator(true, 'newlife');
   }, 700);
 }
 function goHome() {
@@ -2965,6 +2984,7 @@ function rebuildCompanions() {
     L.squad.mates.forEach((name, i) => add(name, L.village, {
       cloth: i ? el.color : 0x2a2a34, cloth2: i ? 0x1a1a1a : el.color, hat: i ? 'band' : null, bandColor: el.color, scarf: el.color,
       weapon: 'katana', skin: [0xe0b48a, 0xc99a72][i], hair: [0x1a1410, 0x5a3020][i], kid: true,
+      hairStyle: ['spiky', 'ponytail'][i], eyes: [0x2a5a9a, 0x6a3a9a][i], protector: { color: 0x1a1a2a, kanji: el.kanji },
     }, i ? 1 : -1));
   }
   if (L.ally !== null && L.ally !== undefined) {

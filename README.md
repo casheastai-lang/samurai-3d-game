@@ -185,6 +185,18 @@ Slams and stomps can't be blocked, so jump or roll. Some heavy moves (charges, s
 
 Groups fight like a real gang: only two ordinary enemies attack you at once, while the rest circle and wait for an opening.
 
+### Anime look
+
+The game is drawn like an anime:
+- **Cel shading:** sunlight falls in crisp bands of shadow, light and highlight.
+- **Rim light:** a soft glow catches the edges of characters and walls.
+- **Ink outlines:** traced around every shape from the depth buffer. They fade with distance and skip the grass.
+- **Color:** vivid colors with cool shadows and warm highlights.
+- **Characters:** big anime eyes, and hairstyles you choose in the creator (topknot, spiky, short, long, ponytail).
+- **Forehead protectors:** Academy graduates and their squads wear one, engraved with their village's symbol.
+
+When the Demon King's curse sends you to the new world, the character creator opens so you can design your new self.
+
 ### Fire and smoke
 
 All fire is real volumetric flame (ray-marched): a white-hot core fading to deep red tips, with turbulence that grows as it rises.
@@ -215,6 +227,7 @@ Progress is saved in the browser's localStorage.
 - `src/world.js`: terrain, lakes, sky, grass and trees with wind, towns, ninja bases, demon fortresses
 - `src/textures.js`: procedural textures (plaster, wood, roof tiles, stone, shoji, fabric, bark, water ripples)
 - `src/fx.js`: particles, sword trails, lightning, ambient petals and embers
+- `src/anime.js`: cel-shading patch, rim light, and the ink-outline render pass
 - `src/fireVfx.js`: ray-marched flames, fire walls and whirls, charcoal smoke, cooling embers, heat haze, smouldering grass, flash limiter
 - `src/enemyMoves.js`: enemy moves as data (telegraph, active windows, recovery, contact shapes), movesets, move selection, contact checks and content validation
 - `tests/`: automated tests for the enemy move system (`node --test tests/*.test.mjs`)

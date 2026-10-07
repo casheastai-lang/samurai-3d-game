@@ -542,6 +542,8 @@ function chunkedInstances(geo, mat, list, { cell, range, shadow = true, tint = n
   const col = new THREE.Color();
   for (const [k, arr] of groups) {
     const im = new THREE.InstancedMesh(geo, mat, arr.length);
+    // Grass draws after the ground without writing depth, so the ink outlines skip it.
+    if (grass) { mat.depthWrite = false; im.renderOrder = 1; }
     arr.forEach(([m, i], j) => {
       im.setMatrixAt(j, m);
       if (tint) { tint(col, i); im.setColorAt(j, col); }

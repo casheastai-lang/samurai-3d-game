@@ -188,3 +188,17 @@ export const scrollTex = (ch = '道') => once('scroll' + ch, () => {
   ctx.fillText(ch, 64, 70);
   return toTexture(c);
 });
+
+// A forehead protector plate: brushed steel with the village's symbol engraved in it.
+export const protectorTex = (ch = '火') => once('protector' + ch, () => {
+  const c = canvas(128);
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 128);
+  g.addColorStop(0, '#e8ecf0'); g.addColorStop(0.5, '#9aa2ac'); g.addColorStop(1, '#d8dde2');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
+  for (let y = 0; y < 128; y += 2) { ctx.fillStyle = `rgba(255,255,255,${0.04 + Math.random() * 0.05})`; ctx.fillRect(0, y, 128, 1); }
+  ctx.font = 'bold 86px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillText(ch, 66, 70);
+  ctx.fillStyle = '#20242a'; ctx.fillText(ch, 64, 68);
+  return toTexture(c);
+});
