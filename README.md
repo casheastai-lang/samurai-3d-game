@@ -63,7 +63,7 @@ Every shop also sells armor, charms, potions and six outfits: Wandering Ronin, C
 ### After the Demon King: a new life
 
 Beating Shuten-doji isn't the end. With his last breath he curses you, and you wake as a **six-year-old child** on an island in another world.
-Five villages live there around a great sacred tree at the Crossroads. Pick the one that raises you; its gift lasts your whole life:
+Five villages live there, very far apart, around a great sacred tree at the Crossroads. Each one is guarded by six ninjas and watchtowers. Pick the one that raises you; its gift lasts your whole life:
 
 | Village | Element | Gift | Heirloom blade at 16 |
 | --- | --- | --- | --- |
@@ -101,6 +101,22 @@ Each village teaches its own power. Your sensei teaches it to you at age 8; pres
 | Golden | Golden Thunder | Lightning strikes up to five foes |
 | Ice | Frost Nova | Freezes every foe around you for a few seconds |
 | Water | Healing Tide | A wave hurls foes away and heals a third of your health |
+
+### The Academy, your squad and ranked missions
+
+Every village has an **Academy**: an open training yard with dummies, straw targets and a weapon rack, run by its own master.
+Children take ten lessons there: Footwork (glowing rings), First Cuts, Target Practice, Guard Up, The Parry, Rolling Escape, Village Art, a Sparring Match, the Gate Run and the Final Exam. Each lesson passed raises your max health by 5.
+
+**You get no real sword until you graduate.** Until then you train with an oak bokken, and shops won't sell you weapons.
+Graduating gives you a steel katana and assigns you to a **squad**: two classmates who travel and fight beside you and grow up with you.
+The academy master then hands out **squad missions**:
+- **D rank:** find the runaway cat, or clear imps from the fields.
+- **C rank:** escort a merchant to another village (and survive the ambush).
+- **B rank:** hunt oni in the far wilds.
+- **A rank:** stop a rogue ninja and his gang.
+- **S rank:** slay a demon warlord before he reaches a village. The reward is Raikiri, the Lightning Cutter.
+
+New ranks unlock as your squad finishes missions. You also need to graduate before your coming-of-age ceremony at 16.
 
 ### Rivals, missions and allies
 

@@ -566,12 +566,13 @@ export function makeEnemyModel(type, scale) {
     case 'boss': return makeOni({ skin: 0x6a1010, scale, hair: 0x0c0606, eyes: 0xfff2a0, horn: 0xd4af37, cape: 0x111111, clubLen: 1.35, single: true });
     case 'echo': return makeOni({ skin: 0x2a1a3a, scale, hair: 0x0a0612, eyes: 0xc89aff, horn: 0x8a7ab0, cape: 0x1a0a2a, clubLen: 1.35, single: true });
   }
+  if (type === 'student') return makeHumanoid({ cloth: 0xe8e0d0, cloth2: 0x2a3a5a, weapon: 'katana', blade: { color: 0x9a6a3a, glow: 0x000000 }, scale, skin: 0xe0b48a });
   // Village guards and champions of the new world, in their village colors.
   const vg = /^(guard|champion)_(\w+)$/.exec(type);
   if (vg && SPIRIT_LOOK[vg[2]]) {
     const c = VILLAGE_CLOTH[vg[2]];
     return vg[1] === 'guard'
-      ? makeHumanoid({ cloth: c, cloth2: 0x1a1a1a, hat: 'kabuto', armor: 0x3a3a40, weapon: 'katana', scale, skin: 0xd6a37e })
+      ? makeHumanoid({ cloth: 0x18181e, cloth2: 0x101014, hat: 'ninja', scarf: c, armor: c, weapon: 'blade', scale, skin: 0xc99a72 })
       : makeHumanoid({ cloth: c, cloth2: 0x101010, hat: 'band', bandColor: c, scarf: c, armor: 0x5a1a1a, weapon: 'katana', blade: { color: 0xffffff, glow: c }, scale, skin: 0xd6a37e });
   }
   // Elemental spirits of the new world: small imps and full-grown oni.
@@ -1194,4 +1195,74 @@ export function makeRoom(kind, ch = '道') {
   }
   g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; } });
   return { group: g, cols, spots };
+}
+
+// ---------- Village props ----------
+export function makeBarrels() {
+  const g = new THREE.Group(), wood = tmat('wood', 0x8a5a34, 1, 1), band = smat(0x2a2420, { metalness: 0.5 });
+  [[0, 0], [0.75, 0.25], [0.3, -0.7]].forEach(([x, z], k) => {
+    mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.9, 12), wood, x, 0.45, z, g);
+    for (const y of [0.15, 0.75]) mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.05, 12), band, x, y, z, g, false);
+    if (k === 0) mesh(new THREE.CylinderGeometry(0.34, 0.3, 0.9, 12), wood, x, 1.35, z, g);
+  });
+  return g;
+}
+export function makeCrates() {
+  const g = new THREE.Group(), wood = tmat('wood', 0xa07a4a, 1, 1);
+  mesh(new THREE.BoxGeometry(0.9, 0.7, 0.9), wood, 0, 0.35, 0, g);
+  mesh(new THREE.BoxGeometry(0.9, 0.7, 0.9), wood, 1.0, 0.35, 0.1, g);
+  mesh(new THREE.BoxGeometry(0.8, 0.6, 0.8), wood, 0.5, 1.0, 0.05, g).rotation.y = 0.3;
+  // A sack of rice on top.
+  mesh(new THREE.SphereGeometry(0.35, 10, 8).scale(1, 0.7, 1), smat(0xd8ccaa, { roughness: 1 }), 1.0, 0.95, 0.1, g);
+  return g;
+}
+export function makeHandcart() {
+  const g = new THREE.Group(), wood = tmat('wood', 0x7a5a3a, 1, 1), dark = smat(0x3a2a1a);
+  mesh(new THREE.BoxGeometry(1.4, 0.12, 2.2), wood, 0, 0.7, 0, g);
+  for (const sx of [-1, 1]) {
+    mesh(new THREE.BoxGeometry(0.08, 0.35, 2.2), wood, sx * 0.68, 0.9, 0, g);
+    mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.08, 14).rotateZ(Math.PI / 2), dark, sx * 0.78, 0.55, -0.3, g);
+    mesh(new THREE.BoxGeometry(0.06, 0.06, 1.6), wood, sx * 0.5, 0.75, 1.8, g);
+  }
+  mesh(new THREE.SphereGeometry(0.3, 8, 6), smat(0xd8ccaa), 0.2, 0.95, 0.2, g);
+  mesh(new THREE.SphereGeometry(0.3, 8, 6), smat(0x6a8a3a), -0.3, 0.95, -0.4, g);
+  return g;
+}
+export function makeBench() {
+  const g = new THREE.Group(), wood = tmat('wood', 0x8a6a4a, 2, 1);
+  mesh(new THREE.BoxGeometry(2.0, 0.08, 0.5), wood, 0, 0.45, 0, g);
+  for (const sx of [-0.8, 0.8]) mesh(new THREE.BoxGeometry(0.1, 0.45, 0.4), wood, sx, 0.22, 0, g);
+  // A red parasol, like a teahouse bench.
+  mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 5), wood, 0.9, 1.1, 0.3, g, false);
+  mesh(new THREE.ConeGeometry(1.2, 0.4, 12), smat(0xc0392b, { side: THREE.DoubleSide }), 0.9, 2.2, 0.3, g);
+  return g;
+}
+export function makeLaundry() {
+  const g = new THREE.Group(), pole = tmat('wood', 0x6a5a40, 1, 2);
+  for (const sx of [-1.4, 1.4]) mesh(new THREE.CylinderGeometry(0.05, 0.06, 2.2, 6), pole, sx, 1.1, 0, g);
+  mesh(new THREE.CylinderGeometry(0.02, 0.02, 2.8, 4).rotateZ(Math.PI / 2), pole, 0, 2.05, 0, g, false);
+  [0xe8e0d0, 0x3a5a8a, 0xc0392b, 0xd8c890].forEach((c, k) => mesh(new THREE.BoxGeometry(0.5, 0.7, 0.02), smat(c, { side: THREE.DoubleSide }), -1 + k * 0.65, 1.68, 0, g, false));
+  return g;
+}
+export function makeGarden() {
+  const g = new THREE.Group(), soil = smat(0x4a3424, { roughness: 1 }), fence = tmat('wood', 0x9a8a5a, 1, 1);
+  mesh(new THREE.BoxGeometry(4, 0.2, 3), soil, 0, 0.1, 0, g);
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
+    const c = [0x4a8a3a, 0x6aa040, 0x3a7a3a][(i + j) % 3];
+    mesh(new THREE.SphereGeometry(0.28, 8, 6).scale(1, 0.7, 1), smat(c), -1.4 + i * 0.95, 0.35, -0.9 + j * 0.9, g);
+  }
+  for (const [x, z, w, d] of [[0, 1.6, 4.2, 0.06], [0, -1.6, 4.2, 0.06], [2.1, 0, 0.06, 3.2], [-2.1, 0, 0.06, 3.2]]) mesh(new THREE.BoxGeometry(w, 0.5, d), fence, x, 0.3, z, g, false);
+  return g;
+}
+// A great stone monument with the village's element, glowing in its color.
+export function makeMonument(color, kanji) {
+  const g = new THREE.Group(), stone = tmat('stone', 0x9a948a, 1, 2);
+  mesh(new THREE.CylinderGeometry(2.4, 2.8, 0.6, 8), stone, 0, 0.3, 0, g);
+  mesh(new THREE.CylinderGeometry(1.8, 2.2, 0.5, 8), stone, 0, 0.85, 0, g);
+  mesh(new THREE.BoxGeometry(1.4, 4.2, 0.6), stone, 0, 3.2, 0, g);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), new THREE.MeshStandardMaterial({ map: scrollTex(kanji), emissive: color, emissiveIntensity: 0.25, roughness: 0.8 }));
+  face.position.set(0, 3.6, 0.31); g.add(face);
+  const back = face.clone(); back.rotation.y = Math.PI; back.position.z = -0.31; g.add(back);
+  mesh(new THREE.OctahedronGeometry(0.6), smat(color, { emissive: color, emissiveIntensity: 2 }), 0, 5.9, 0, g);
+  return g;
 }

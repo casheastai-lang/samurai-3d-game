@@ -254,3 +254,15 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
 .rel-Home { color: #ffd860; }
 .relations { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 14px; }
 #quest .qmission { margin-top: 8px; }
+
+/* ---------- Academy and squad missions ---------- */
+.lessons { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; margin: 10px 0; font-size: 14px; }
+.lesson { color: var(--muted); }
+.lesson.done { color: #7dff8a; }
+.lesson span { font-size: 12px; }
+.rank { width: 34px; height: 34px; flex-shrink: 0; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #1a1410; }
+.rank-D { background: #b9ad96; }
+.rank-C { background: #7dc8ff; }
+.rank-B { background: #7dff8a; }
+.rank-A { background: #ffb84a; }
+.rank-S { background: linear-gradient(135deg, #ff5a5a, #ffd860); box-shadow: 0 0 10px #ff8a4a; }

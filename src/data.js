@@ -190,10 +190,10 @@ TOWNS.forEach((t, i) => {
 // ============================================================ The new world
 // After the Demon King falls, his curse throws the hero into another world: an island
 // of five villages, one for each element, where they are reborn as a child.
-export const NEW_X = -700;
+export const NEW_X = -1000;
 // House interiors are rooms built far off to the west, past the new world.
-export const INTERIOR_X = -2000;
-export const NW = { x: -1150, z: -600, r: 300, ring: 150 };
+export const INTERIOR_X = -3600;
+export const NW = { x: -2250, z: -600, r: 900, ring: 600 };
 export const ELEMENTS = [
   {
     key: 'shadow', name: 'Shadow', village: 'Kagemura', kanji: '影', color: 0x9a6ae0, css: '#b48cff',
@@ -247,7 +247,7 @@ ELEMENTS.forEach((el, k) => {
   el.index = k;
   const t = {
     name: el.village, nw: true, element: k, wall: el.wall, roof: el.roof, snow: el.key === 'ice',
-    x: NW.x + Math.cos(a) * NW.ring, z: NW.z + Math.sin(a) * NW.ring, r: 64, big: true, index: TOWNS.length,
+    x: NW.x + Math.cos(a) * NW.ring, z: NW.z + Math.sin(a) * NW.ring, r: 96, big: true, index: TOWNS.length,
     shops: [
       shop(el.name + ' Village Store', 'The village merchant', ['potion', 'elixir', 'b:yumi', 'b:lacquered', 'a:leather', 'a:iron', 'c:stamina', 'c:vitality']),
       shop(el.name + ' Smithy', 'The village smith', ['w:steel', 'w:kaze', 'w:tama', 'w:frost', 'w:nodachi', 'a:iron']),
@@ -294,6 +294,7 @@ export const WEAPONS = {
   kinryu:    { name: 'Kinryu, the Golden Dragon', atk: 48, price: 0, color: 0xffe080, glow: 0xc09000, effect: 'shock', desc: 'The heirloom blade of Kinmura. It crackles like summer storms.', reward: true },
   hyoga:     { name: 'Hyoga, Glacier Fang', atk: 46, price: 0, color: 0xdff4ff, glow: 0x40a0ff, effect: 'frost', desc: 'The heirloom blade of Koorimura. Frost gathers on its edge.', reward: true },
   suigetsu:  { name: 'Suigetsu, Moon on Water', atk: 46, price: 0, color: 0xbfe8ff, glow: 0x1a70b0, effect: 'leech', desc: 'The heirloom blade of Mizumura. Its cuts heal the one who holds it.', reward: true },
+  raikiri:   { name: 'Raikiri, the Lightning Cutter', atk: 60, price: 0, color: 0xe8f4ff, glow: 0x4a8aff, effect: 'shock', desc: 'The reward for an S-rank mission. It once cut a bolt of lightning in two.', reward: true },
   yamata:    { name: 'Yamata Dragonblade', atk: 62, price: 0, color: 0x80ffb0, glow: 0x00c060, effect: 'demonbane', len: 1.3, reach: 0.6, style: 'nodachi', desc: 'Taken from Kuro. The bane of all demons.', reward: true },
 };
 
@@ -387,10 +388,11 @@ export const ENEMIES = {
   warlord:  { name: 'Demon Warlord', hp: 700, dmg: 30, speed: 4.6, range: 3.8, scale: 2.4, radius: 1.4, xp: 400, gold: [200, 260], windup: 0.6, recover: 0.7, aggro: 30, poise: 3 },
   boss:     { name: 'Shuten-doji, the Demon King', hp: 2600, dmg: 38, speed: 4.6, range: 5.2, scale: 3.4, radius: 2.2, xp: 1500, gold: [1000, 1000], windup: 0.75, recover: 0.9, aggro: 36, poise: 3 },
 };
+ENEMIES.student = { name: 'Academy Student', hp: 110, dmg: 4, speed: 3.8, range: 1.8, scale: 0.8, radius: 0.45, xp: 15, gold: [0, 0], windup: 0.75, recover: 1.0, aggro: 12, poise: 0 };
 ENEMIES.echo = { name: 'Echo of Shuten-doji', hp: 2200, dmg: 30, speed: 4.6, range: 5, scale: 3.2, radius: 2.1, xp: 1200, gold: [800, 800], windup: 0.75, recover: 0.95, aggro: 34, poise: 3 };
 for (const el of ELEMENTS) {
   ENEMIES['imp_' + el.key] = { name: el.name + ' Imp', hp: 26, dmg: 5, speed: 3.6, range: 1.7, scale: 0.72, radius: 0.45, xp: 10, gold: [3, 7], windup: 0.65, recover: 0.95, aggro: 11, poise: 0 };
-  ENEMIES['guard_' + el.key] = { name: el.village + ' Guard', hp: 130, dmg: 12, speed: 5.0, range: 2.0, scale: 1, radius: 0.5, xp: 30, gold: [10, 20], windup: 0.45, recover: 0.6, aggro: 15, poise: 1 };
+  ENEMIES['guard_' + el.key] = { name: el.village + ' Ninja Guard', hp: 140, dmg: 12, speed: 6.0, range: 1.9, scale: 1, radius: 0.5, xp: 34, gold: [10, 20], windup: 0.38, recover: 0.5, aggro: 18, poise: 1, ranged: { dmg: 7, cd: 2.8, min: 5, max: 16 }, evade: 0.25 };
   ENEMIES['champion_' + el.key] = { name: 'Champion of ' + el.village, hp: 650, dmg: 17, speed: 5.4, range: 2.2, scale: 1.15, radius: 0.6, xp: 220, gold: [120, 160], windup: 0.4, recover: 0.5, aggro: 22, poise: 2, evade: 0.2 };
   ENEMIES['beast_' + el.key] = { name: el.name + ' Oni', hp: 150, dmg: 16, speed: 4.0, range: 2.6, scale: 1.5, radius: 0.85, xp: 60, gold: [25, 40], windup: 0.6, recover: 0.8, aggro: 16, poise: 1 };
 }

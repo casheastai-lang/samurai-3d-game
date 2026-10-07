@@ -8,7 +8,7 @@ import {
   makeHumanoid, makeHouse, makeTorii, makeStoneLantern, makeShopStall, makeShrine, smat,
   makeTent, makeWatchtower, makeBanner, makeCampfire, makeDummy, makePortal, makeChest, makeKeep, tmat, mergeStatic,
   makeCastle, makePagoda, makeCityWall, makeGatehouse, makeKura, makeWell, makeFence, makeTempleHall, makeArchBridge,
-  makeRoom, ROOM_W, ROOM_D,
+  makeRoom, ROOM_W, ROOM_D, makeBarrels, makeCrates, makeHandcart, makeBench, makeLaundry, makeGarden, makeMonument,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
@@ -72,12 +72,13 @@ NW_TOWNS.forEach((t, k) => {
     TRAILS.push([t.x, t.z, n.x, n.z]);
   }
   // A coastal path out past each village.
-  TRAILS.push([t.x, t.z, NW.x + (t.x - NW.x) / NW.ring * 235, NW.z + (t.z - NW.z) / NW.ring * 235]);
+  const coast = (NW.r - 70) / NW.ring;
+  TRAILS.push([t.x, t.z, NW.x + (t.x - NW.x) * coast, NW.z + (t.z - NW.z) * coast]);
 });
 {
   // Mizumura's lotus lake, between the Water and Shadow villages near the shore.
   const a = (ELEMENTS[4].angle + ELEMENTS[0].angle + Math.PI * 2) / 2;
-  LAKES.push({ x: NW.x + Math.cos(a) * 218, z: NW.z + Math.sin(a) * 218, r: 26, nw: true });
+  LAKES.push({ x: NW.x + Math.cos(a) * NW.r * 0.72, z: NW.z + Math.sin(a) * NW.r * 0.72, r: 42, nw: true });
 }
 const inNewWorld = x => x < NEW_X && x > INTERIOR_X;
 const inInterior = x => x < INTERIOR_X;
@@ -653,11 +654,18 @@ function buildTown(t) {
   const keepClear = [[...at(0, 12), 8], [...at(-9, 12), 8], [hx, hz, 8], [ex, ez, 4]];
   if (t.nw) {
     buildHomeAndDojo(t, at, keepClear);
-    // Guard posts just outside both gates: toward the Crossroads and toward the sea.
+    // Six ninja guard posts: two at each gate, and one by each watchtower on the flanks.
     nwSite.gates[t.element] = [];
     for (const sgn of [-1, 1]) for (const side of [-1, 1]) {
-      const [gx, gz] = at(sgn * (t.r + 4), side * 4);
+      const [gx, gz] = at(sgn * (t.r + 4), side * 5);
       nwSite.gates[t.element].push({ x: gx, z: gz, facing: Math.atan2(dx * sgn, dz * sgn) });
+    }
+    for (const side of [-1, 1]) {
+      const [gx, gz] = at(4, side * (t.r + 4));
+      nwSite.gates[t.element].push({ x: gx, z: gz, facing: Math.atan2(px * side, pz * side) });
+      const [wx, wz] = at(-4, side * (t.r + 6));
+      placeObj(makeWatchtower(), wx, wz, Math.atan2(px * side, pz * side));
+      addCollider(wx, wz, 2.2);
     }
   }
   if (t.city) buildCity(t, dx, dz, px, pz, at, keepClear);
@@ -760,12 +768,50 @@ function plantRice() {
   chunkedInstances(tuft, mat, mats, { cell: 96, range: 150, shadow: false });
 }
 
+// Life between the houses of a big village: carts, barrels and crates by the streets,
+// teahouse benches, laundry lines, vegetable gardens and the element monument.
+function villageProps(t, spots, keepClear, at) {
+  const el = ELEMENTS[t.element], g = new THREE.Group();
+  const free = (x, z, r) => !spots.some(([hx, hz]) => Math.hypot(x - hx, z - hz) < r + 3.6)
+    && !keepClear.some(([cx, cz, cr]) => Math.hypot(x - cx, z - cz) < cr + r) && roadDist(x, z) > r + 2.5;
+  const makers = [makeBarrels, makeCrates, makeHandcart, makeBench, makeLaundry];
+  let k = 0;
+  for (const rs of [31.5, 51, 70, 89.5]) {
+    const n = Math.round(rs / 4.5);
+    for (let j = 0; j < n; j++) {
+      const a = (j / n) * Math.PI * 2 + rs * 0.37;
+      for (const side of [-3.4, 3.4]) {
+        const x = t.x + Math.cos(a) * (rs + side), z = t.z + Math.sin(a) * (rs + side);
+        if (wrand() < 0.45 || !free(x, z, 1.2)) continue;
+        const m = makers[k++ % makers.length]();
+        m.position.set(x, height(x, z), z);
+        m.rotation.y = -a + (side > 0 ? Math.PI / 2 : -Math.PI / 2);
+        g.add(m);
+        addCollider(x, z, 1.0);
+      }
+    }
+  }
+  // Vegetable gardens in the gaps of the outer rings.
+  for (let j = 0; j < 40; j++) {
+    const a = wr(0, Math.PI * 2), r = wr(58, 92);
+    const x = t.x + Math.cos(a) * r, z = t.z + Math.sin(a) * r;
+    if (!free(x, z, 2.6)) continue;
+    const gd = makeGarden();
+    gd.position.set(x, height(x, z), z);
+    gd.rotation.y = -a;
+    g.add(gd);
+    addCollider(x, z, 2.2);
+  }
+  scene.add(g);
+  mergeStatic(g);
+}
+
 // Ring streets through a big village, with lanterns along them.
 function bigVillageStreets(t) {
   const g = new THREE.Group();
   const mat = new THREE.MeshLambertMaterial({ color: 0xa48a62, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  for (const r of [31.5, 51]) {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(r - 2, r + 2, 72).rotateX(-Math.PI / 2), mat);
+  for (const r of [31.5, 51, 70, 89.5]) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(r - 2, r + 2, 96).rotateX(-Math.PI / 2), mat);
     ring.position.set(t.x, height(t.x, t.z) + 0.06, t.z);
     ring.receiveShadow = true;
     g.add(ring);
@@ -792,7 +838,7 @@ function buildVillage(t, prev, next, keepClear, at) {
   keepClear.push([wx, wz, 5]);
   // Two rings of houses and storehouses.
   const spots = [];
-  const rings = t.hamlet ? [[16, 9]] : t.big ? [[18, 12], [25.5, 16], [37.5, 22], [45, 26], [56.5, 32]] : [[18, 12], [25.5, 16]];
+  const rings = t.hamlet ? [[16, 9]] : t.big ? [[18, 12], [25.5, 16], [37.5, 22], [45, 26], [56.5, 32], [64, 36], [75.5, 42], [83, 46]] : [[18, 12], [25.5, 16]];
   if (t.big) bigVillageStreets(t);
   let k = 0;
   for (const [rr, n] of rings) {
@@ -804,6 +850,7 @@ function buildVillage(t, prev, next, keepClear, at) {
     }
   }
   houseBlock(t, spots);
+  if (t.big) villageProps(t, spots, keepClear, at);
 
   // Bamboo fence around the edge, open where roads and trails come in.
   const fence = new THREE.Group();
@@ -1137,9 +1184,20 @@ function buildGrass() {
   });
   // New-world grass, tinted by each element's lands: violet, rust, gold, sea-green.
   const nwMats = [], nwSec = [];
-  for (let i = 0; i < 260000 && nwMats.length < 70000; i++) {
-    const a = wr(0, Math.PI * 2), r = Math.sqrt(wrand()) * (NW.r - 40);
-    const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
+  const nwTrails = TRAILS.filter(([ax]) => ax < NEW_X);
+  for (let i = 0; i < 1100000 && nwMats.length < 210000; i++) {
+    let x, z, r;
+    if (i % 3) {
+      // Most grass grows along the paths and around the villages, where you walk.
+      const [ax, az, bx, bz] = nwTrails[Math.floor(wrand() * nwTrails.length)], u = wrand();
+      x = lerp(ax, bx, u) + wr(-45, 45); z = lerp(az, bz, u) + wr(-45, 45);
+      r = Math.hypot(x - NW.x, z - NW.z);
+      if (r > NW.r - 40) continue;
+    } else {
+      const a = wr(0, Math.PI * 2);
+      r = Math.sqrt(wrand()) * (NW.r - 40);
+      x = NW.x + Math.cos(a) * r; z = NW.z + Math.sin(a) * r;
+    }
     const sec = nwSector(x, z), key = ELEMENTS[sec].key;
     if (key === 'ice' || (key === 'fire' && wrand() < 0.7)) continue;
     if (roadDist(x, z) < 3.5 || townDist(x, z) < -3 || r < HUB_R + 2 || lakeDist(x, z) < 0) continue;
@@ -1425,7 +1483,7 @@ function buildDemonBase(db, tier) {
 
 // ============================================================ The new world
 // Positions the game logic needs: the Crossroads, the echo's lair, each home and dojo.
-const nwSite = { hub: { x: NW.x, z: NW.z }, homes: [], dummies: [], herbs: [], gates: [], envoys: [] };
+const nwSite = { hub: { x: NW.x, z: NW.z }, homes: [], dummies: [], herbs: [], gates: [], envoys: [], academy: [] };
 
 // The player's family home and the village dojo, in every new-world village.
 function buildHomeAndDojo(t, at, keepClear) {
@@ -1477,6 +1535,90 @@ function buildHomeAndDojo(t, at, keepClear) {
   addCollider(sx, sz, 0.5);
   interactables.push({ kind: 'sensei', town: t, x: sx, z: sz });
   keepClear.push([dx, dz, 7]);
+  // The element monument in the village square.
+  const [mx, mz] = at(9, -15);
+  placeObj(makeMonument(el.color, el.kanji), mx, mz, facing(mx, mz, t.x, t.z));
+  addCollider(mx, mz, 2.6);
+  keepClear.push([mx, mz, 5]);
+  buildAcademy(t, at, keepClear);
+}
+
+// The village academy: an open training yard between the two ring streets where
+// children learn to fight. Dummies, straw targets, a weapon rack and an instructor.
+function buildAcademy(t, at, keepClear) {
+  const el = ELEMENTS[t.element];
+  const [cx, cz] = at(0, -41);
+  keepClear.push([cx, cz, 11]);
+  const g = new THREE.Group();
+  const yard = new THREE.Mesh(new THREE.CircleGeometry(8, 32).rotateX(-Math.PI / 2), smat(0xc8b48a, { roughness: 1 }));
+  yard.position.set(cx, height(cx, cz) + 0.07, cz);
+  yard.receiveShadow = true;
+  g.add(yard);
+  const edge = new THREE.Mesh(new THREE.TorusGeometry(8, 0.18, 6, 40).rotateX(Math.PI / 2), tmat('wood', 0x7a5a3a, 6, 0.3));
+  edge.position.set(cx, height(cx, cz) + 0.12, cz);
+  g.add(edge);
+  const toC = facing(0, 0, t.x - cx, t.z - cz);
+  const local = (u, v) => [cx + Math.cos(toC) * u + Math.sin(toC) * v, cz - Math.sin(toC) * u + Math.cos(toC) * v];
+  const site = { x: cx, z: cz, dummies: [], targets: [], rings: [] };
+  for (const u of [-3, 0, 3]) {
+    const [x, z] = local(u, -3);
+    const d = makeDummy(); d.position.set(x, height(x, z), z); g.add(d);
+    addCollider(x, z, 0.4);
+    site.dummies.push({ x, z });
+  }
+  // Straw targets around the yard's edge, on posts.
+  const straw = smat(0xc8a860, { roughness: 1 }), red = smat(0xc0392b), post = tmat('wood', 0x6a4a30, 1, 2);
+  for (let k = 0; k < 4; k++) {
+    const a = toC + Math.PI / 2 + (k - 1.5) * 0.7;
+    const x = cx + Math.sin(a) * 6.6, z = cz + Math.cos(a) * 6.6;
+    const tg = new THREE.Group();
+    const pst = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.4, 6), post); pst.position.y = 0.7; tg.add(pst);
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.18, 16).rotateX(Math.PI / 2), straw); disc.position.y = 1.6; tg.add(disc);
+    const eye = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.2, 12).rotateX(Math.PI / 2), red); eye.position.y = 1.6; tg.add(eye);
+    tg.position.set(x, height(x, z), z);
+    tg.rotation.y = Math.atan2(cx - x, cz - z);
+    g.add(tg);
+    addCollider(x, z, 0.35);
+    site.targets.push({ x, z });
+  }
+  // Footwork rings: a winding course through the yard and the street beside it.
+  for (let k = 0; k < 6; k++) {
+    const a = toC + k * 1.05 + 0.4, r = k % 2 ? 4.5 : 10.5;
+    site.rings.push({ x: cx + Math.sin(a) * r, z: cz + Math.cos(a) * r });
+  }
+  // Weapon rack and banners.
+  const [rx, rz] = local(-5.5, 2.5);
+  const rack = new THREE.Group();
+  const wood = tmat('wood', 0x5a3a24, 1, 1);
+  for (const sx of [-0.8, 0.8]) { const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.4, 0.1), wood); p.position.set(sx, 0.7, 0); rack.add(p); }
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.08, 0.08), wood); bar.position.y = 1.2; rack.add(bar);
+  for (let k = 0; k < 4; k++) { const b = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 1.1, 5), smat(0x9a6a3a)); b.position.set(-0.6 + k * 0.4, 0.75, 0.06); b.rotation.z = 0.08; rack.add(b); }
+  rack.position.set(rx, height(rx, rz), rz);
+  rack.rotation.y = toC;
+  g.add(rack);
+  addCollider(rx, rz, 0.9);
+  for (const sx of [-1, 1]) {
+    const [bx, bz] = local(sx * 7.6, 4.5);
+    const ban = makeBanner(el.color, 0xffffff);
+    ban.position.set(bx, height(bx, bz), bz);
+    ban.rotation.y = toC;
+    g.add(ban);
+  }
+  scene.add(g);
+  mergeStatic(g);
+  // The instructor.
+  const [mx, mz] = local(0, 4.2);
+  const master = makeHumanoid({ cloth: 0xe8e0d0, cloth2: el.color, hat: 'elder', weapon: 'staff', skin: 0xd6a37e });
+  placeObj(master.root, mx, mz, Math.atan2(cx - mx, cz - mz), false);
+  master.armR.rotation.x = -0.4;
+  staticNPCs.push(master);
+  addCollider(mx, mz, 0.5);
+  interactables.push({ kind: 'academy', town: t, x: mx + (cx - mx) * 0.3, z: mz + (cz - mz) * 0.3 });
+  site.master = { x: mx, z: mz };
+  // The race lesson: out to the far gate and back.
+  const [rgx, rgz] = at(t.r - 3, 0);
+  site.gate = { x: rgx, z: rgz };
+  nwSite.academy[t.element] = site;
 }
 
 // ---- House interiors, one room per kind, far to the west.
@@ -1506,7 +1648,7 @@ function roomAt(x, z) {
 function buildNewWorld() {
   const W = [0, 0, 0, 0, 0];
   // ---- Terrain disc, colored by element.
-  const size = NW.r * 2 + 60, seg = Math.round(size / 4);
+  const size = NW.r * 2 + 60, seg = Math.round(size / 6);
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2).translate(NW.x, 0, NW.z);
   const pos = geo.attributes.position, colors = new Float32Array(pos.count * 3);
   const c = new THREE.Color(), tmp = new THREE.Color(), tmp2 = new THREE.Color();
@@ -1608,12 +1750,13 @@ function buildNewWorld() {
 }
 
 // Scenery that gives each element's lands their own character.
+const NWS = NW.r / 300;
 function buildElementLands(el) {
   const t = el.town, g = new THREE.Group();
   const ux = Math.cos(el.angle), uz = Math.sin(el.angle);
   const spot = (minR, maxR, tries = 30) => {
     for (let k = 0; k < tries; k++) {
-      const a = el.angle + wr(-0.55, 0.55), r = wr(minR, maxR);
+      const a = el.angle + wr(-0.6, 0.6), r = wr(minR, maxR);
       const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
       if (roadDist(x, z) > 7 && townDist(x, z) > 6 && lakeDist(x, z) > 4) return [x, z];
     }
@@ -1622,8 +1765,8 @@ function buildElementLands(el) {
   const add = (m, x, z, rad, y = 0) => { m.position.set(x, height(x, z) + y, z); g.add(m); if (rad) addCollider(x, z, rad); };
   if (el.key === 'shadow') {
     const obs = smat(0x1a1622, { roughness: 0.4, flatShading: true }), glow = smat(0xa070ff, { emissive: 0x8a4aff, emissiveIntensity: 2.2 });
-    for (let k = 0; k < 16; k++) {
-      const p = spot(60, 250); if (!p) continue;
+    for (let k = 0; k < 16 * NWS; k++) {
+      const p = spot(60 * NWS, NW.r - 50); if (!p) continue;
       const h = wr(3, 7);
       const o = new THREE.Mesh(new THREE.ConeGeometry(wr(0.7, 1.3), h, 5), obs);
       o.castShadow = true;
@@ -1633,25 +1776,25 @@ function buildElementLands(el) {
     }
   } else if (el.key === 'fire') {
     const lava = smat(0xff6a1a, { emissive: 0xff4000, emissiveIntensity: 2.4 }), rock = smat(0x2a201c, { flatShading: true });
-    for (let k = 0; k < 14; k++) {
-      const p = spot(60, 250); if (!p) continue;
+    for (let k = 0; k < 14 * NWS; k++) {
+      const p = spot(60 * NWS, NW.r - 50); if (!p) continue;
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 1, 9, 1, true), rock);
       add(ring, p[0], p[1], 2, 0.3);
       const pool = new THREE.Mesh(new THREE.CircleGeometry(2.1, 12).rotateX(-Math.PI / 2), lava);
       add(pool, p[0], p[1], 0, 0.5);
     }
     // A great forge chimney outside the village.
-    const fx = t.x + ux * 82 - uz * 18, fz = t.z + uz * 82 + ux * 18;
+    const fx = t.x + ux * (t.r + 18) - uz * 24, fz = t.z + uz * (t.r + 18) + ux * 24;
     const chim = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 12, 10), tmat('stone', 0x8a6a5a, 2, 3));
     chim.castShadow = true;
     add(chim, fx, fz, 2.4, 6);
   } else if (el.key === 'golden') {
-    placeObj(makePagoda(0xb8901a), t.x + ux * 84 + uz * 22, t.z + uz * 84 - ux * 22, el.angle);
-    addCollider(t.x + ux * 84 + uz * 22, t.z + uz * 84 - ux * 22, 5);
+    placeObj(makePagoda(0xb8901a), t.x + ux * (t.r + 22) + uz * 26, t.z + uz * (t.r + 22) - ux * 26, el.angle);
+    addCollider(t.x + ux * (t.r + 22) + uz * 26, t.z + uz * (t.r + 22) - ux * 26, 5);
     // Wheat fields: rows of tall golden stalks.
     const stalks = [], dummy = new THREE.Object3D();
-    for (let f = 0; f < 6; f++) {
-      const p = spot(90, 240); if (!p) continue;
+    for (let f = 0; f < 6 * NWS; f++) {
+      const p = spot(t.r + 40 + NW.ring - 140, NW.r - 60); if (!p) continue;
       const rot = wr(0, Math.PI);
       for (let i = 0; i < 14; i++) for (let j = 0; j < 10; j++) {
         const lx = (i - 7) * 0.8, lz = (j - 5) * 0.9;
@@ -1669,8 +1812,8 @@ function buildElementLands(el) {
     chunkedInstances(wheat, wm, stalks, { cell: 96, range: 150, shadow: false });
   } else if (el.key === 'ice') {
     const ice = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, emissive: 0x2a7ab0, emissiveIntensity: 0.5, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.85, flatShading: true });
-    for (let k = 0; k < 22; k++) {
-      const p = spot(50, 260); if (!p) continue;
+    for (let k = 0; k < 22 * NWS; k++) {
+      const p = spot(50 * NWS, NW.r - 50); if (!p) continue;
       const cl = new THREE.Group();
       for (let j = 0; j < 4; j++) {
         const h = wr(1.5, 4.5);
@@ -1710,7 +1853,7 @@ function buildNwTrees() {
   const dummy = new THREE.Object3D();
   const round = [], pines = [], dead = [];
   const roundSec = [], pineSec = [];
-  for (let i = 0; i < 9000; i++) {
+  for (let i = 0; i < 9000 * NWS * NWS * 0.8; i++) {
     const a = wr(0, Math.PI * 2), r = Math.sqrt(wrand()) * (NW.r - 45);
     const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
     if (r < HUB_R + 10 || roadDist(x, z) < 7 || townDist(x, z) < 6 || lakeDist(x, z) < 3) continue;
