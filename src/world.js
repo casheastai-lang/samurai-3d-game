@@ -11,9 +11,12 @@ import {
   makeRoom, ROOM_W, ROOM_D, makeBarrels, makeCrates, makeHandcart, makeBench, makeLaundry, makeGarden, makeMonument,
 } from './models.js';
 import { barkTex, waterNormalTex } from './textures.js';
+import { groundHeat } from './fireVfx.js';
 import { clamp, lerp, smooth, wr, wrand } from './util.js';
 
 let scene = null;
+// Every fire burning in the world: flames, smoke and heat come from fireVfx.js.
+const fireSites = [];
 // Shared clock for wind sway in grass, trees and water.
 const windTime = { value: 0 };
 // Late-afternoon sun: low and warm, for long shadows.
@@ -222,6 +225,34 @@ function detailTerrain(mat) {
         vec3 rockCol = vec3(0.36, 0.34, 0.31) * (0.7 + fbm3(vWPos.xz * 0.7 + vWPos.y * 0.5) * 0.6);
         diffuseColor.rgb = mix(diffuseColor.rgb, rockCol, rockAmt);
       }`);
+  };
+}
+// Grass near fire chars to black, and its tips smoulder with a flickering glow.
+function scorchable(mat) {
+  const wind = mat.onBeforeCompile;
+  mat.onBeforeCompile = sh => {
+    wind(sh);
+    sh.uniforms.uHot = groundHeat.uHot;
+    sh.uniforms.uHotK = groundHeat.uHotK;
+    sh.uniforms.uFireTime = groundHeat.uTime;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vHotW; varying float vTip;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+        vHotW = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz; vTip = clamp(position.y / 0.6, 0.0, 1.0);`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+        uniform vec4 uHot[8]; uniform float uHotK[8]; uniform float uFireTime; varying vec3 vHotW; varying float vTip;`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          float heat = 0.0;
+          for (int i = 0; i < 8; i++) {
+            vec4 h = uHot[i];
+            if (h.w <= 0.0) continue;
+            heat += uHotK[i] * smoothstep(h.w, h.w * 0.35, length(vHotW.xz - h.xz));
+          }
+          heat = clamp(heat, 0.0, 1.0);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.045, 0.038, 0.032), heat * 0.85);
+          float flick = 0.6 + 0.4 * sin(uFireTime * 7.0 + vHotW.x * 3.1 + vHotW.z * 2.3);
+          totalEmissiveRadiance += vec3(1.6, 0.5, 0.08) * heat * smoothstep(0.35, 1.0, vTip) * flick;
+        }`);
   };
 }
 // Sways vertices by height above the instance origin, like wind through grass and leaves.
@@ -1119,8 +1150,9 @@ function buildArena() {
     const g = new THREE.Group();
     const p = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1.1, 7, 6), stone); p.position.y = 3.5; p.castShadow = true; g.add(p);
     const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 0.6, 0.5, 8), stone); bowl.position.y = 7.2; g.add(bowl);
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.4, 6), fire); flame.position.y = 8.1; g.add(flame);
+    const coals = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 0.1, 10), fire); coals.position.y = 7.45; g.add(coals);
     placeObj(g, x, z, 0);
+    fireSites.push({ x, y: height(x, z) + 7.4, z, w: 1.5, h: 2.6, flame: true, smoke: 1.2, smokeSize: 1.3 });
     addCollider(x, z, 1.1);
   }
   const floor = new THREE.Mesh(new THREE.CircleGeometry(ARENA.r - 2, 40).rotateX(-Math.PI / 2),
@@ -1178,6 +1210,7 @@ function buildGrass() {
   }
   const grassMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   addWind(grassMat, 0.5, 0.6);
+  scorchable(grassMat);
   chunkedInstances(blade, grassMat, mats, {
     cell: 32, range: 60, shadow: false, grass: true,
     tint: c => c.setHSL(0.2 + Math.random() * 0.07, 0.35 + Math.random() * 0.2, 0.5 + Math.random() * 0.15),
@@ -1364,7 +1397,9 @@ function buildNinjaBase(nb, tier) {
     placeObj(makeTent([0x24242a, 0x2a2420, 0x1f2a24][Math.abs(f + s) % 3]), x, z, Math.atan2(nb.x - x, nb.z - z));
     addCollider(x, z, 2.2);
   }
-  placeObj(makeCampfire(), ...at(7, 0), 0);
+  const [cfx, cfz] = at(7, 0);
+  placeObj(makeCampfire(), cfx, cfz, 0);
+  fireSites.push({ x: cfx, y: height(cfx, cfz) + 0.1, z: cfz, w: 1.1, h: 1.8, flame: true, smoke: 2, smokeSize: 1.2 });
   addCollider(...at(7, 0), 0.8);
   for (let k = 0; k < 3; k++) {
     const [x, z] = at(13, -4 + k * 4);
@@ -1441,8 +1476,9 @@ function buildDemonBase(db, tier) {
   for (const [x, z] of [[-10, -16], [10, -16], [-16, 4], [16, 4], [-8, 22], [8, 22]]) {
     const b = new THREE.Group();
     const p = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 3.2, 6), wallM); p.position.y = 1.6; b.add(p);
-    const f = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.5, 6), fire); f.position.y = 3.9; b.add(f);
+    const coals = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.1, 8), fire); coals.position.y = 3.25; b.add(coals);
     b.position.set(x, 0, z);
+    fireSites.push({ x: db.x + x, y: 3.2, z: db.z + z, w: 1.1, h: 2.2, flame: true, smoke: 1 });
     g.add(b);
     addCollider(db.x + x, db.z + z, 0.8);
   }
@@ -1783,12 +1819,14 @@ function buildElementLands(el) {
       add(ring, p[0], p[1], 2, 0.3);
       const pool = new THREE.Mesh(new THREE.CircleGeometry(2.1, 12).rotateX(-Math.PI / 2), lava);
       add(pool, p[0], p[1], 0, 0.5);
+      fireSites.push({ x: p[0], y: height(p[0], p[1]) + 0.4, z: p[1], w: 1.6, h: 0.6, flame: false, smoke: 0.9, smokeSize: 1.6, smokeLife: 5 });
     }
     // A great forge chimney outside the village.
     const fx = t.x + ux * (t.r + 18) - uz * 24, fz = t.z + uz * (t.r + 18) + ux * 24;
     const chim = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 12, 10), tmat('stone', 0x8a6a5a, 2, 3));
     chim.castShadow = true;
     add(chim, fx, fz, 2.4, 6);
+    fireSites.push({ x: fx, y: height(fx, fz) + 11.5, z: fz, w: 1.4, h: 0.5, flame: false, smoke: 3, smokeSize: 2, smokeLife: 7 });
   } else if (el.key === 'golden') {
     placeObj(makePagoda(0xb8901a), t.x + ux * (t.r + 22) + uz * 26, t.z + uz * (t.r + 22) - ux * 26, el.angle);
     addCollider(t.x + ux * (t.r + 22) + uz * 26, t.z + uz * (t.r + 22) - ux * 26, 5);
@@ -1910,6 +1948,6 @@ function buildWorld(sc) {
 }
 
 export {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, fireSites, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, lakeAt, height, roadDist, nearestSeg, townDist, townAt, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, ninjaPortals, segDist,
 };

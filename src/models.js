@@ -759,9 +759,9 @@ export function makeCampfire() {
     const l = mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.3, 5), logM, 0, 0.15, 0, g);
     l.rotation.z = Math.PI / 2; l.rotation.y = i * Math.PI / 4;
   }
-  const fire = new THREE.MeshStandardMaterial({ color: 0xffa040, emissive: 0xff5a10, emissiveIntensity: 3 });
-  mesh(new THREE.ConeGeometry(0.45, 1.1, 6), fire, 0, 0.7, 0, g, false);
-  mesh(new THREE.ConeGeometry(0.25, 0.8, 5), new THREE.MeshStandardMaterial({ color: 0xffe080, emissive: 0xffc040, emissiveIntensity: 3 }), 0.1, 0.6, 0.1, g, false);
+  // Glowing coals; the flame itself is a ray-marched volume from fireVfx.js.
+  const coals = new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0xff4a10, emissiveIntensity: 2.2 });
+  mesh(new THREE.SphereGeometry(0.45, 10, 6).scale(1, 0.3, 1), coals, 0, 0.12, 0, g, false);
   return g;
 }
 

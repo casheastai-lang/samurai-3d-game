@@ -185,6 +185,17 @@ Slams and stomps can't be blocked, so jump or roll. Some heavy moves (charges, s
 
 Groups fight like a real gang: only two ordinary enemies attack you at once, while the rest circle and wait for an opening.
 
+### Fire and smoke
+
+All fire is real volumetric flame (ray-marched): a white-hot core fading to deep red tips, with turbulence that grows as it rises.
+- **Flame Burst** (Fire village art) throws up a wall of fire in separate tongues, with a fire whirl spiralling up from where you stand.
+- **Burning enemies** catch real flames and trail smoke and embers.
+- **Campfires, braziers, lava pools and the forge** smoke and spark.
+
+The smoke is charcoal, lit only by the fire. Embers cool from yellow-white to red, then drift down as grey ash.
+Hot air shimmers with heat haze (on High graphics), and grass near the fire chars black while its tips smoulder.
+Screen flashes are soft and never come more than three times a second.
+
 ### Rules
 
 - **Towns are safe.** Demons won't follow you inside.
@@ -204,6 +215,7 @@ Progress is saved in the browser's localStorage.
 - `src/world.js`: terrain, lakes, sky, grass and trees with wind, towns, ninja bases, demon fortresses
 - `src/textures.js`: procedural textures (plaster, wood, roof tiles, stone, shoji, fabric, bark, water ripples)
 - `src/fx.js`: particles, sword trails, lightning, ambient petals and embers
+- `src/fireVfx.js`: ray-marched flames, fire walls and whirls, charcoal smoke, cooling embers, heat haze, smouldering grass, flash limiter
 - `src/enemyMoves.js`: enemy moves as data (telegraph, active windows, recovery, contact shapes), movesets, move selection, contact checks and content validation
 - `tests/`: automated tests for the enemy move system (`node --test tests/*.test.mjs`)
 - `src/main.js`: player, combat, enemy AI, shurikens, portals, shops, inventory, UI

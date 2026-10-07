@@ -14,10 +14,13 @@ import {
   MOVES, ENEMY_STYLES, archetypeOf, validateContent, selectMove, phaseAt, spawnsBetween, resolveContacts,
   lungeSpeed, activeLength, totalTime, engageRange, AttackTokens,
 } from './enemyMoves.js';
+import {
+  initFire, updateFire, setFireSites, setFireQuality, fireWall, fireWhirl, attachFlame, smoke, embers, impactSmoke, hazeShader, flashAllowed,
+} from './fireVfx.js';
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
-  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
+  buildWorld, updateSky, updateChunks, setGrassEnabled, frostAmt, fireSites, inNewWorld, inInterior, roomAt, rooms, nwSector, nwWeights, nwSite, makeEnvScene, SUN_DIR, height, nearestSeg, townAt, townDist, arenaDist, ninjaDist, ninjaBaseAt,
   demonBaseAt, collideStatic, clampBounds, interactables, villagers, staticNPCs, segDist,
 } from './world.js';
 import {
@@ -51,6 +54,8 @@ scene.add(sun, sun.target);
 // Post-processing renders into a multisampled HDR target so edges stay smooth.
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples: 4 }));
 composer.addPass(new RenderPass(scene, camera));
+// Heat haze over fire, from fireVfx.js (the material is shared so its uniforms stay live).
+composer.addPass(new ShaderPass(new THREE.ShaderMaterial(hazeShader)));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.55, 1.0);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -143,6 +148,8 @@ const skyTop = new THREE.Color(), skyHor = new THREE.Color(), sunCol = new THREE
 
 buildWorld(scene);
 initFx(scene, camera, height);
+initFire(scene, camera, height);
+setFireSites(fireSites);
 applyGfx();
 
 // ============================================================ Rig animation
@@ -457,6 +464,7 @@ function toggleGfx() {
   gfxHigh = !gfxHigh;
   try { localStorage.setItem('roninsroad.gfx', gfxHigh ? 'high' : 'low'); } catch { /* ignore */ }
   applyGfx();
+  setFireQuality(gfxHigh);
   banner('', gfxHigh ? 'Graphics: High (glow, sharp shadows)' : 'Graphics: Fast (no glow, lower resolution)', 1.6);
 }
 
@@ -586,7 +594,10 @@ function tryIai() {
   floatText(headPos(), 'IAIJUTSU', 'crit', 1.4);
   canvas.style.filter = 'saturate(0.25) contrast(1.15) brightness(0.85)';
 }
+// Impact frames stay gentle: soft, and never more than three in a second.
 function screenFlash(strength = 0.85) {
+  if (!flashAllowed(performance.now())) return;
+  strength = Math.min(strength, 0.45);
   const f = $('flash');
   f.style.transition = 'none';
   f.style.opacity = String(strength);
@@ -895,7 +906,7 @@ function applyWeaponEffect(e, dmg) {
   const fxType = gear().effect;
   if (!fxType || !e.alive) return;
   const y = height(e.pos.x, e.pos.z) + e.def.scale * 1.4;
-  if (fxType === 'burn') { e.burnT = 3; e.burnDmg = Math.max(2, Math.round(dmg * 0.12)); burst(e.pos.x, y, e.pos.z, 10, 0xff7a1a, 2, 4, 0.6, -2); }
+  if (fxType === 'burn') { e.burnT = 3; e.burnDmg = Math.max(2, Math.round(dmg * 0.12)); embers(e.pos.x, y, e.pos.z, 8, { speed: 3 }); }
   else if (fxType === 'frost') { e.slowT = 2.5; burst(e.pos.x, y, e.pos.z, 10, 0x9ad8ff, 2, 2, 0.7, 2); }
   else if (fxType === 'leech') { const heal = Math.max(1, Math.round(dmg * 0.1)); P.hp = Math.min(maxHp(), P.hp + heal); }
   else if (fxType === 'shock') {
@@ -1414,6 +1425,7 @@ function damageEnemy(e, dmg, crit, A, nx, nz) {
 
 function killEnemy(e) {
   endMove(e);
+  if (e.burnFx) { e.burnFx.stop(); e.burnFx = null; smoke(e.pos.x, height(e.pos.x, e.pos.z) + 1, e.pos.z, 6, { size: 1.4 }); }
   e.alive = false; e.deadT = 0; e.state = 'dead'; e.hp = 0;
   e.burnT = 0; e.slowT = 0;
   if (e.bar) e.bar.visible = false;
@@ -1584,7 +1596,8 @@ function moveFeedback(e, m, w) {
     });
   } else if (m.vfx === 'slam') {
     shake(m.tags.includes('heavy') ? 0.8 : 0.4);
-    burst(e.pos.x, gy + 0.5, e.pos.z, m.tags.includes('heavy') ? 90 : 40, 0xff6a2a, 12, 5, 0.9, 10);
+    burst(e.pos.x, gy + 0.5, e.pos.z, m.tags.includes('heavy') ? 50 : 24, 0xff6a2a, 12, 5, 0.9, 10);
+    impactSmoke(e.pos.x, e.pos.z, w.shape?.radius ?? 3, demon);
   }
 }
 function runMove(e, dt, dist, dx, dz, turnTo, toPlayer) {
@@ -1666,9 +1679,14 @@ function updateEnemies(dt, playerSafe) {
 
     e.t += dt; e.cd -= dt; e.flash -= dt; e.rangedCd -= dt;
     e.evadeT -= dt; e.evadeCd -= dt; e.slowT -= dt;
+    if (e.burnT > 0 && !e.burnFx && !e.far) {
+      e.burnFx = attachFlame(() => ({ x: e.pos.x, y: height(e.pos.x, e.pos.z) + d.scale * 0.4, z: e.pos.z }), { w: 0.8 * d.scale, h: 1.6 * d.scale });
+    }
+    if ((e.burnT <= 0 || !e.alive) && e.burnFx) { e.burnFx.stop(); e.burnFx = null; }
     if (e.burnT > 0) {
       e.burnT -= dt; e.burnTick -= dt;
-      if (Math.random() < 0.4) burst(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 1.2, e.pos.z, 1, 0xff7a1a, 1, 2, 0.6, -2);
+      if (Math.random() < 2.5 * dt) smoke(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 2.2, e.pos.z, 1, { size: 0.9 * d.scale, life: 2.5 });
+      if (Math.random() < 4 * dt) embers(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 1.2, e.pos.z, 1, { speed: 2.5, spread: d.scale * 0.6 });
       if (e.burnTick <= 0) {
         e.burnTick = 0.5;
         e.hp -= e.burnDmg;
@@ -1686,6 +1704,7 @@ function updateEnemies(dt, playerSafe) {
     for (const id in e.cooldowns) e.cooldowns[id] -= dt;
     // Anything that knocked the enemy out of its move (a parry, a stagger, a freeze) ends it.
     if (e.move && e.state !== 'move') endMove(e);
+    if (dist > 20 && attackTurns.has(e.uid) && !e.move) attackTurns.release(e.uid);
     const leaving = () => (playerSafe && !e.spar) || dist > d.aggro * 2.6 || homeDist > leash || (e.faction !== undefined && !hostileTo(e.faction)) || P.dead;
     // Ordinary enemies need an attack turn; bosses and duelists of honor do not.
     const needsTurn = e.style.token && !e.role;
@@ -1722,10 +1741,11 @@ function updateEnemies(dt, playerSafe) {
         turnTo(toPlayer, 8);
         if (e.cd <= 0) {
           const id = chooseMove(e, dist, toPlayer);
-          if (id && (!needsTurn || attackTurns.request(e.uid))) { startMove(e, id); break; }
+          // A turn is claimed only to attack up close; throwing needs no turn.
+          if (id && (!needsTurn || MOVES[id].tags.includes('ranged') || attackTurns.request(e.uid))) { startMove(e, id); break; }
         }
-        // Without a turn, hold back and circle once close enough.
-        if (needsTurn && !attackTurns.has(e.uid) && dist < e.style.circle + 1.5) { e.state = 'circle'; e.t = 0; break; }
+        // While others have the turns, hold back and circle once close enough.
+        if (needsTurn && attackTurns.holders.size >= attackTurns.capacity && dist < e.style.circle + 1.5) { e.state = 'circle'; e.t = 0; break; }
         const want = Math.max(e.reach * 0.75, e.arch.style === 'skirmisher' ? 0 : 0);
         if (dist > want) {
           mvx = dx / dist; mvz = dz / dist; moveSpeed = sp;
@@ -1748,7 +1768,7 @@ function updateEnemies(dt, playerSafe) {
         // Ranged enemies keep throwing while they wait.
         const ranged = e.arch.moves.find(id => MOVES[id].tags.includes('ranged'));
         if (ranged && e.cd <= 0) { const id = chooseMove(e, dist, toPlayer); if (id && MOVES[id].tags.includes('ranged')) { startMove(e, id); break; } }
-        if (e.t > 0.4 && attackTurns.request(e.uid)) { e.state = 'chase'; e.cd = 0; }
+        if (e.t > 0.4 && attackTurns.holders.size < attackTurns.capacity) { e.state = 'chase'; e.cd = 0; }
         break;
       }
       case 'move': {
@@ -2744,12 +2764,13 @@ function useArt() {
       break;
     }
     case 'fire': {
-      for (let k = 0; k < 36; k++) {
-        const a = (k / 36) * Math.PI * 2;
-        for (const r of [2.5, 4.5, 6.5]) burst(P.pos.x + Math.cos(a) * r, P.y + 0.4, P.pos.z + Math.sin(a) * r, 2, k % 2 ? 0xff7a1a : 0xffd040, 2, 5, 0.7, -3);
-      }
+      // A wall of fire bursts out in a ring of separate tongues, and a fire whirl rises
+      // from where you stand. Grown fire samurai raise taller flames.
+      const power = 0.7 + 0.5 * growth();
+      fireWall(P.pos.x, P.pos.z, 5.2, { clumps: 11, life: 1.9, power });
+      fireWhirl(P.pos.x, P.pos.z, { life: 1.3, h: 5 + 3 * growth(), w: 2.4 });
       for (const e of near(7.5)) { hurt(e, 1.6, 1); e.burnT = 4; e.burnDmg = Math.max(3, Math.round(pow * 0.18)); }
-      screenFlash(0.25);
+      screenFlash(0.2);
       break;
     }
     case 'golden': {
@@ -3993,6 +4014,7 @@ function frame() {
     refreshEnvironment('day');
   }
   updateCamera(dt);
+  updateFire(started && !ui ? dt : dt * 0.25, camera.position);
   updateFloaters(dt);
   if (started) {
     if (frameNo % 2 === 0) updateHUD();
