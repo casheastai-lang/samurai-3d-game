@@ -240,3 +240,17 @@ button.secondary:hover:not(:disabled) { background: #3a322b; }
 @media (max-width: 720px) {
   #quest { top: auto; bottom: 150px; right: 8px; width: 200px; }
 }
+
+/* ---------- Village art cooldown ---------- */
+.fill.art { background: var(--el, #9adcff); }
+#artRow .lbl { color: var(--el, var(--muted)); }
+#artRow.full .bar { box-shadow: 0 0 10px var(--el); border-color: var(--el); }
+
+/* ---------- Village relations ---------- */
+.relbadge { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; font-size: 12px; vertical-align: 3px; border: 1px solid currentColor; }
+.rel-Rival { color: #ff6a5a; }
+.rel-Atpeace { color: #dddddd; }
+.rel-Ally { color: #7dff8a; }
+.rel-Home { color: #ffd860; }
+.relations { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 10px 0; font-size: 14px; }
+#quest .qmission { margin-top: 8px; }

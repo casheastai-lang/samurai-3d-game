@@ -651,7 +651,15 @@ function buildTown(t) {
   interactables.push({ kind: 'elder', town: t, x: ex, z: ez });
 
   const keepClear = [[...at(0, 12), 8], [...at(-9, 12), 8], [hx, hz, 8], [ex, ez, 4]];
-  if (t.nw) buildHomeAndDojo(t, at, keepClear);
+  if (t.nw) {
+    buildHomeAndDojo(t, at, keepClear);
+    // Guard posts just outside both gates: toward the Crossroads and toward the sea.
+    nwSite.gates[t.element] = [];
+    for (const sgn of [-1, 1]) for (const side of [-1, 1]) {
+      const [gx, gz] = at(sgn * (t.r + 4), side * 4);
+      nwSite.gates[t.element].push({ x: gx, z: gz, facing: Math.atan2(dx * sgn, dz * sgn) });
+    }
+  }
   if (t.city) buildCity(t, dx, dz, px, pz, at, keepClear);
   else buildVillage(t, prev, next, keepClear, at);
 
@@ -1417,7 +1425,7 @@ function buildDemonBase(db, tier) {
 
 // ============================================================ The new world
 // Positions the game logic needs: the Crossroads, the echo's lair, each home and dojo.
-const nwSite = { hub: { x: NW.x, z: NW.z }, homes: [], dummies: [], herbs: [] };
+const nwSite = { hub: { x: NW.x, z: NW.z }, homes: [], dummies: [], herbs: [], gates: [], envoys: [] };
 
 // The player's family home and the village dojo, in every new-world village.
 function buildHomeAndDojo(t, at, keepClear) {
@@ -1579,6 +1587,20 @@ function buildNewWorld() {
   mergeStatic(hub);
   addCollider(NW.x, NW.z, 3.4);
   nwSite.echo = { x: NW.x, z: NW.z + 14 };
+  // An envoy from each village waits on neutral ground under the tree.
+  for (const el of ELEMENTS) {
+    const x = NW.x + Math.cos(el.angle) * 15, z = NW.z + Math.sin(el.angle) * 15;
+    const env = makeHumanoid({ cloth: el.color, cloth2: 0x1a1a1a, hat: el.key === 'ice' ? 'kasa' : 'bun', skin: 0xd6a37e, weapon: 'staff' });
+    placeObj(env.root, x, z, Math.atan2(NW.x - x, NW.z - z), false);
+    env.armR.rotation.x = -0.4;
+    staticNPCs.push(env);
+    addCollider(x, z, 0.5);
+    interactables.push({ kind: 'envoy', element: el.index, x: x + (NW.x - x) / 15 * 1.3, z: z + (NW.z - z) / 15 * 1.3 });
+    nwSite.envoys[el.index] = { x, z };
+    // A banner in the village's color behind each envoy.
+    const ban = makeBanner(el.color, 0xffffff);
+    placeObj(ban, NW.x + Math.cos(el.angle) * 18.5, NW.z + Math.sin(el.angle) * 18.5, Math.atan2(NW.x - x, NW.z - z));
+  }
 
   // ---- Landmarks around each village.
   for (const el of ELEMENTS) buildElementLands(el);

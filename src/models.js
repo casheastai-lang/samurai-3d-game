@@ -546,6 +546,7 @@ export function makeOni(o = {}) {
   return rig;
 }
 
+const VILLAGE_CLOTH = { shadow: 0x4a2a7a, fire: 0xb83a1a, golden: 0xc8961a, ice: 0x6aa8d0, water: 0x1a6a9a };
 const SPIRIT_LOOK = {
   shadow: { skin: 0x3a2a52, hair: 0x120a1e, eyes: 0xd0a0ff, horn: 0x6a5a8a },
   fire:   { skin: 0xd8501a, hair: 0x3a0a04, eyes: 0xfff080, horn: 0x2a1a14 },
@@ -564,6 +565,14 @@ export function makeEnemyModel(type, scale) {
     case 'captain': return makeOni({ skin: 0x2a2526, scale, hair: 0x5a0d0d, eyes: 0xff3322, horn: 0xc9a227, cape: 0x5a0d0d, clubLen: 1.2 });
     case 'boss': return makeOni({ skin: 0x6a1010, scale, hair: 0x0c0606, eyes: 0xfff2a0, horn: 0xd4af37, cape: 0x111111, clubLen: 1.35, single: true });
     case 'echo': return makeOni({ skin: 0x2a1a3a, scale, hair: 0x0a0612, eyes: 0xc89aff, horn: 0x8a7ab0, cape: 0x1a0a2a, clubLen: 1.35, single: true });
+  }
+  // Village guards and champions of the new world, in their village colors.
+  const vg = /^(guard|champion)_(\w+)$/.exec(type);
+  if (vg && SPIRIT_LOOK[vg[2]]) {
+    const c = VILLAGE_CLOTH[vg[2]];
+    return vg[1] === 'guard'
+      ? makeHumanoid({ cloth: c, cloth2: 0x1a1a1a, hat: 'kabuto', armor: 0x3a3a40, weapon: 'katana', scale, skin: 0xd6a37e })
+      : makeHumanoid({ cloth: c, cloth2: 0x101010, hat: 'band', bandColor: c, scarf: c, armor: 0x5a1a1a, weapon: 'katana', blade: { color: 0xffffff, glow: c }, scale, skin: 0xd6a37e });
   }
   // Elemental spirits of the new world: small imps and full-grown oni.
   const el = /^(imp|beast)_(\w+)$/.exec(type);

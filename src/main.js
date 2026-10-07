@@ -294,8 +294,20 @@ const P = {
   blocking: false, blockPressT: -10, comboCount: 0, comboTimer: 0, lock: null,
   sheathed: true, combatT: 0, sheathT: 0,
   style: 'two', bow: 'hankyu', ownedBows: ['hankyu'],
-  life: null, looted: [], outside: null, houseId: null,
+  life: null, looted: [], outside: null, houseId: null, artCd: 0, hiddenT: 0,
 };
+// Rival villages: from this age on, the other villages treat you as a warrior of yours.
+const RIVAL_AGE = 14;
+const relOf = k => (P.life ? P.life.rel[k] : 0);
+const isAlly = k => !!P.life && (k === P.life.village || relOf(k) >= 60);
+function hostileTo(k) {
+  const L = P.life;
+  if (!L || k === L.village || L.age < RIVAL_AGE || L.rel[k] >= 0) return false;
+  // Messengers carrying letters pass safely.
+  if (L.task?.type === 'deliver' && TOWNS[L.task.target].element === k) return false;
+  return true;
+}
+const relName = k => (k === P.life?.village ? 'Home' : relOf(k) >= 60 ? 'Ally' : relOf(k) >= 0 ? 'At peace' : 'Rival');
 // Village perks in the new life.
 const perk = key => !!P.life && ELEMENTS[P.life.village].key === key;
 // A child grows from 58% of adult height at six to full height at sixteen.
@@ -399,6 +411,7 @@ window.addEventListener('keydown', e => {
     case 'KeyK': tryAttack(true); break;
     case 'Space': tryJump(); break;
     case 'KeyF': case 'KeyC': tryDodge(); break;
+    case 'KeyV': useArt(); break;
   }
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -432,7 +445,8 @@ function updateHint() {
   const el = $('hint');
   if (!el) return;
   const attack = isArcher() ? 'Click shoot &middot; Right-click power shot' : 'Click slash &middot; Right-click heavy';
-  el.innerHTML = `WASD move &middot; ${attack} &middot; Q block/parry &middot; X ${STYLES[P.style].special} &middot; Tab lock-on &middot; Space jump &middot; F dodge &middot; E interact &middot; 1/2 heal &middot; I inventory &middot; M map &middot; H help`;
+  const art = P.life && P.life.age >= ART_AGE ? ` &middot; V ${ELEMENTS[P.life.village].art.name}` : '';
+  el.innerHTML = `WASD move &middot; ${attack} &middot; Q block/parry &middot; X ${STYLES[P.style].special}${art} &middot; Tab lock-on &middot; Space jump &middot; F dodge &middot; E interact &middot; 1/2 heal &middot; I inventory &middot; M map &middot; H help`;
 }
 function toggleGfx() {
   gfxHigh = !gfxHigh;
@@ -448,7 +462,7 @@ const distTo = e => Math.hypot(e.pos.x - P.pos.x, e.pos.z - P.pos.z);
 function nearestEnemy(range) {
   let best = null, bd = range;
   for (const e of enemies) {
-    if (!e.alive) continue;
+    if (!e.alive || (e.faction !== undefined && !hostileTo(e.faction))) continue;
     const d = distTo(e) - e.def.radius;
     if (d < bd) { bd = d; best = e; }
   }
@@ -991,6 +1005,8 @@ function gainXP(n) {
 
 const _base = new THREE.Vector3(), _tip = new THREE.Vector3();
 function updatePlayer(dt) {
+  P.artCd = Math.max(0, P.artCd - dt);
+  P.hiddenT = Math.max(0, P.hiddenT - dt);
   if (perk('water') && !P.dead && P.hp > 0) P.hp = Math.min(maxHp(), P.hp + 1.5 * dt);
   P.stateT += dt;
   P.invul = Math.max(0, P.invul - dt);
@@ -1350,10 +1366,17 @@ function spawnWorldEnemies() {
     }
   }
   echo = createEnemy('echo', nwSite.echo.x, nwSite.echo.z, { facing: 0, role: 'echo' });
+  // Gate guards of every village. They only fight you if their village is your rival.
+  for (const el of ELEMENTS) for (const g of nwSite.gates[el.index]) {
+    const e = createEnemy('guard_' + el.key, g.x, g.z, { facing: g.facing });
+    e.faction = el.index;
+    e.guard = true;
+  }
 }
 
 function damageEnemy(e, dmg, crit, A, nx, nz) {
   if (!e.alive) return;
+  if (e.faction !== undefined && !hostileTo(e.faction)) return;
   e.hp -= dmg;
   e.flash = 0.12;
   const top = e.def.scale * 2.4 + 0.3;
@@ -1519,19 +1542,21 @@ function updateEnemies(dt, playerSafe) {
           if (tl < 0.6) e.target = null;
           else { mvx = tx / tl; mvz = tz / tl; moveSpeed = sp * 0.3; turnTo(Math.atan2(tx, tz), 4); }
         }
-        if (!playerSafe && dist < d.aggro && Math.abs(P.y - height(e.pos.x, e.pos.z)) < 8) {
+        const friendly = e.faction !== undefined && !hostileTo(e.faction);
+        if (!playerSafe && !friendly && P.hiddenT <= 0 && dist < d.aggro && Math.abs(P.y - height(e.pos.x, e.pos.z)) < 8) {
           if (e.role && !e.talked && !P.dead) { openBossTalk(e); break; }
           e.state = 'chase';
           floatText(new THREE.Vector3(e.pos.x, height(e.pos.x, e.pos.z) + d.scale * 2.4 + 0.6, e.pos.z), '!', 'alert', 0.8);
           if (e === boss) { banner('Shuten-doji', 'The Demon King rises to face you', 3); shake(0.5); }
           else if (e.role === 'echo') { banner(e.title, 'The Demon King\'s shadow', 3); shake(0.5); }
+          else if (e.role === 'champion') banner(e.title, 'A duel of honor', 2.5);
           else if (e.role) banner(e.title, e.role === 'master' ? 'Master of ' + e.base.name : 'Lord of the ' + e.base.name, 2.5);
         }
         break;
       }
       case 'chase': {
         e.glow = 0;
-        if (playerSafe || dist > d.aggro * 2.6 || homeDist > leash) { e.state = 'return'; break; }
+        if (playerSafe || dist > d.aggro * 2.6 || homeDist > leash || (e.faction !== undefined && !hostileTo(e.faction))) { e.state = 'return'; break; }
         turnTo(toPlayer, 8);
         if (special && e.cd <= 0 && specialMove(e, dist)) break;
         if (d.ranged && e.rangedCd <= 0 && dist > d.ranged.min && dist < d.ranged.max) { e.state = 'throw'; e.t = 0; break; }
@@ -1811,7 +1836,7 @@ const hud = {
   hpFill: $('hpFill'), hpText: $('hpText'), stFill: $('stFill'), kiFill: $('kiFill'), kiRow: $('kiRow'), xpFill: $('xpFill'),
   lvl: $('lvl'), gold: $('gold'), pots: $('pots'), elx: $('elx'), gear: $('gear'), locName: $('locName'), locSub: $('locSub'),
   prompt: $('prompt'), bossbar: $('bossbar'), bossFill: $('bossFill'), bossName: $('bossName'), lockHint: $('lockHint'),
-  combo: $('combo'), comboN: $('comboN'),
+  combo: $('combo'), comboN: $('comboN'), artRow: $('artRow'), artFill: $('artFill'), artLbl: $('artLbl'),
 };
 function updateHUD() {
   const mh = maxHp();
@@ -1820,6 +1845,15 @@ function updateHUD() {
   hud.stFill.style.width = (P.st / maxSt() * 100) + '%';
   hud.kiFill.style.width = P.ki + '%';
   hud.kiRow.classList.toggle('full', P.ki >= 100);
+  const hasArt = !!P.life && P.life.age >= ART_AGE;
+  hud.artRow.classList.toggle('hidden', !hasArt);
+  if (hasArt) {
+    const art = ELEMENTS[P.life.village].art;
+    hud.artFill.style.width = (100 - P.artCd / art.cd * 100) + '%';
+    hud.artRow.classList.toggle('full', P.artCd <= 0);
+    hud.artLbl.textContent = ELEMENTS[P.life.village].kanji;
+    hud.artRow.style.setProperty('--el', ELEMENTS[P.life.village].css);
+  }
   hud.xpFill.style.width = (P.xp / xpNeeded(P.lvl) * 100) + '%';
   hud.lvl.textContent = P.lvl;
   hud.gold.textContent = P.gold;
@@ -1881,6 +1915,9 @@ modalBox.addEventListener('click', e => {
     case 'join': startNewLife(Number(arg)); break;
     case 'sleep': sleepAtHome(); break;
     case 'inside': goInsideHome(); break;
+    case 'mission': startMission(Number(arg)); break;
+    case 'recruit': recruitAlly(Number(arg)); break;
+    case 'dismiss': dismissAlly(); break;
     case 'talk': talkChoice(arg); break;
     case 'look': setLook(arg); break;
     case 'creator': openCreator(false); break;
@@ -1957,6 +1994,7 @@ function interact() {
   else if (it.kind === 'exit') exitHouse();
   else if (it.kind === 'stash') searchStash();
   else if (it.kind === 'bed') useBed();
+  else if (it.kind === 'envoy') openEnvoy(it.element);
   else openElder(it.town);
 }
 
@@ -1977,6 +2015,7 @@ const hex = c => '#' + c.toString(16).padStart(6, '0');
 
 let shopTown = null, shopDef = null, shopTab = 'swords';
 function openShop(town, shop) {
+  if (town.nw && hostileTo(town.element)) { refuse(town); return; }
   shopTown = town; shopDef = shop;
   const has = { bows: shop.stock.some(id => id.startsWith('b:')), swords: shop.stock.some(id => id.startsWith('w:')), armor: shop.stock.some(id => /^[ac]:/.test(id)), skins: true, supplies: shop.stock.some(id => CONSUMABLES[id]) };
   const order = isArcher() ? [['bows', 'Bows'], ['swords', 'Swords']] : [['swords', 'Swords'], ['bows', 'Bows']];
@@ -2041,9 +2080,18 @@ function openShop(town, shop) {
   if (ui === 'shop') modalBox.innerHTML = html; else openModal(html, 'shop');
 }
 function priceOf(id) {
-  if (CONSUMABLES[id]) return CONSUMABLES[id].price;
+  // Allied villages give a 20% discount.
+  const off = shopTown?.nw && P.life && shopTown.element !== P.life.village && isAlly(shopTown.element) ? 0.8 : 1;
+  if (CONSUMABLES[id]) return Math.round(CONSUMABLES[id].price * off);
   const [kind, key] = id.split(':');
-  return { w: WEAPONS, a: ARMORS, c: CHARMS, s: SKINS, b: BOWS }[kind][key].price;
+  return Math.round({ w: WEAPONS, a: ARMORS, c: CHARMS, s: SKINS, b: BOWS }[kind][key].price * off);
+}
+function refuse(town) {
+  const el = ELEMENTS[town.element], mine = ELEMENTS[P.life.village];
+  openModal(`<h2>${el.village} turns you away</h2>
+    <p>&ldquo;We don't serve ${mine.name} folk here. Go back to ${mine.village}, before the guards drag you out.&rdquo;</p>
+    <p class="sub">${el.village} is your rival. Speak with its envoy under the sacred tree at the Crossroads to make peace.</p>
+    <div class="btns"><button class="secondary" data-act="close">Leave (E)</button></div>`, 'dialog');
 }
 function buy(id) {
   const price = priceOf(id);
@@ -2113,6 +2161,7 @@ function openInventory() {
 }
 
 function openShrine(town) {
+  if (town.nw && hostileTo(town.element)) { refuse(town); return; }
   P.lastTown = town.index;
   save();
   const dests = TOWNS.map(t => {
@@ -2162,6 +2211,9 @@ function openElder(town) {
     return;
   }
   if (task?.type === 'ceremony' && town.nw && town.element === L.village) { comingOfAge(); return; }
+  const m = L?.mission;
+  if (m?.type === 'gift' && town.nw && town.element === m.v) { deliverGift(); return; }
+  if (town.nw && hostileTo(town.element)) { refuse(town); return; }
   openModal(`<h2>${town.elderTitle ?? 'Elder of ' + town.name}</h2><p class="sub">${town.city ? 'They receive you in the city square.' : 'An old villager leans on a staff.'}</p>
     ${town.elder.map(l => `<p>&ldquo;${l}&rdquo;</p>`).join('')}
     <div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
@@ -2172,6 +2224,7 @@ let talkTarget = null;
 function talkKey(e) {
   if (e === boss) return 'boss';
   if (e.role === 'echo') return 'echo';
+  if (e.role === 'champion') return 'champion';
   if (e.role === 'master') return 'master' + NINJA_BASES.indexOf(e.base);
   return 'warlord' + DEMON_BASES.indexOf(e.base);
 }
@@ -2286,7 +2339,7 @@ function openVillageChoice() {
     <div class="villages">${ELEMENTS.map(el => `
       <button class="village" data-act="join|${el.index}" style="--el:${el.css}">
         <i>${el.kanji}</i><b>${el.village} &middot; ${el.name}</b>
-        <span>${el.desc}</span><em>${el.perk}</em>
+        <span>${el.desc}</span><em>${el.perk}</em><em>Village art (V): ${el.art.name}. ${el.art.desc}</em>
       </button>`).join('')}</div>`, 'village');
 }
 function startNewLife(k) {
@@ -2296,6 +2349,8 @@ function startNewLife(k) {
     bow: 'hankyu', ownedBows: ['hankyu'], skin: 'custom', discovered: [t.index], lastTown: t.index, bossDead: true,
   });
   P.life = { village: k, age: 6, task: null, done: 0, adult: false, echoDead: false };
+  P.artCd = 0; P.hiddenT = 0;
+  syncRelations();
   P.dead = false; P.state = 'idle'; P.hp = maxHp(); P.st = maxSt(); P.ki = 0; P.lock = null;
   P.sheathed = !isArcher();
   syncLife();
@@ -2379,11 +2434,14 @@ function taskText(t) {
 }
 function updateQuest() {
   const q = $('quest');
-  if (!P.life || !P.life.task || P.pos.x > -700) { q.classList.add('hidden'); return; }
+  if (!P.life || (!P.life.task && !P.life.mission) || P.pos.x > -700) { q.classList.add('hidden'); return; }
   const el = ELEMENTS[P.life.village];
   q.classList.remove('hidden');
   q.style.setProperty('--el', el.css);
-  q.innerHTML = `<div class="qage">${el.kanji} Age ${P.life.age} &middot; ${el.village}</div><b>${taskTitle(P.life.task)}</b><span>${taskText(P.life.task)}</span>`;
+  if (!P.life.task) { q.innerHTML = `<div class="qage">${el.kanji} Age ${P.life.age} &middot; ${el.village}</div><b class="qmission" style="color:${ELEMENTS[P.life.mission.v].css}">Mission &middot; ${ELEMENTS[P.life.mission.v].village}</b><span>${MISSION_TEXT[P.life.mission.type](P.life.mission, ELEMENTS[P.life.mission.v])}</span>`; return; }
+  const m = P.life.mission;
+  q.innerHTML = `<div class="qage">${el.kanji} Age ${P.life.age} &middot; ${el.village}</div><b>${taskTitle(P.life.task)}</b><span>${taskText(P.life.task)}</span>`
+    + (m ? `<b class="qmission" style="color:${ELEMENTS[m.v].css}">Mission &middot; ${ELEMENTS[m.v].village}</b><span>${MISSION_TEXT[m.type](m, ELEMENTS[m.v])}</span>` : '');
 }
 function spawnPickups(n) {
   clearPickups();
@@ -2438,6 +2496,12 @@ function trainHit(reach, fx, fz) {
   }
 }
 function lifeKill(e) {
+  const m = P.life?.mission;
+  if (m?.type === 'clear' && e.type === 'beast_' + ELEMENTS[m.v].key) { m.have++; updateQuest(); if (m.have >= m.n) missionDone(); }
+  if (m?.type === 'duel' && e === champion) {
+    setTimeout(() => banner('The champion yields', `${ELEMENTS[m.v].village} honors your victory.`, 3), 600);
+    missionDone();
+  }
   const task = P.life?.task;
   if (task?.type !== 'hunt' || !e.type.startsWith(task.what + '_')) return;
   task.have++;
@@ -2464,6 +2528,12 @@ function ageUp(note) {
   P.hp = maxHp();
   rebuildPlayerRig();
   burst(P.pos.x, P.y + 1.2, P.pos.z, 50, ELEMENTS[L.village].color, 3, 4, 1.1, 1);
+  if (L.age === RIVAL_AGE) note = 'The other villages now see you as a warrior of ' + ELEMENTS[L.village].village + '. Their guards will not let you pass. Visit their envoys at the Crossroads.';
+  if (L.age === ART_AGE) {
+    const el = ELEMENTS[L.village];
+    note = `${el.sensei} teaches you the ${el.name} art: ${el.art.name}! Press V.`;
+    updateHint();
+  }
   const sub = note ?? (L.age < 16 ? 'You grow a little taller.' : L.age === 16 ? 'You are grown. The elder wants to see you.' : 'Another year of your new life.');
   banner(L.age === 16 ? 'Sixteen years old' : `Happy birthday! Age ${L.age}`, sub, 3);
   setTimeout(() => { if (P.life === L && !L.task) nextTask(); save(); }, 3200);
@@ -2504,6 +2574,271 @@ function echoDefeated() {
     nextTask();
   }, 2500);
 }
+// ---- Village arts: each element's own power, on V. Taught by the sensei at age 8.
+const ART_AGE = 8;
+function useArt() {
+  if (!P.life || ui || P.dead || !started) return;
+  const el = ELEMENTS[P.life.village], art = el.art;
+  if (P.life.age < ART_AGE) { banner('', `${el.sensei} will teach you the ${el.name} art when you are ${ART_AGE}.`, 2); return; }
+  if (inInterior(P.pos.x)) return;
+  if (['special', 'whirl', 'dodge', 'stunned'].includes(P.state)) return;
+  if (P.artCd > 0) { floatText(headPos(), Math.ceil(P.artCd) + 's', 'xp', 0.7); return; }
+  // Arts grow stronger as you grow up.
+  const pow = atkPower() * (0.55 + 0.45 * growth());
+  const A = { heavy: true, finisher: true, mult: 1 };
+  const near = r => enemies.filter(e => e.alive && distTo(e) < r && Math.abs(height(e.pos.x, e.pos.z) - P.y) < 4);
+  const hurt = (e, mult, kb = 1) => {
+    const dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z, d = Math.hypot(dx, dz) || 1;
+    damageEnemy(e, Math.round(pow * mult * rand(0.9, 1.1)), false, A, dx / d * kb, dz / d * kb);
+  };
+  const ey = e => height(e.pos.x, e.pos.z) + e.def.scale * 1.3;
+  P.state = 'idle'; P.blocking = false;
+  if (!isArcher()) unsheath();
+  shake(0.35); fovKick = 4;
+  switch (el.key) {
+    case 'shadow': {
+      const t = near(16).sort((a, b) => distTo(a) - distTo(b))[0];
+      burst(P.pos.x, P.y + 1.2, P.pos.z, 50, 0x6a3aaa, 3, 4, 0.8, 0);
+      if (t) {
+        const dx = t.pos.x - P.pos.x, dz = t.pos.z - P.pos.z, d = Math.hypot(dx, dz) || 1;
+        P.pos.set(t.pos.x + dx / d * (t.def.radius + 1.2), 0, t.pos.z + dz / d * (t.def.radius + 1.2));
+        P.facing = Math.atan2(-dx, -dz);
+        hurt(t, 2.6, 1);
+        spawnSlashLine(new THREE.Vector3(P.pos.x, P.y + 1.3, P.pos.z), new THREE.Vector3(t.pos.x, ey(t), t.pos.z), { color: 0xb48cff, width: 0.5, life: 0.4 });
+      } else {
+        P.pos.x += Math.sin(P.facing) * 9; P.pos.z += Math.cos(P.facing) * 9;
+      }
+      P.y = height(P.pos.x, P.pos.z);
+      P.invul = 0.8; P.hiddenT = 2.5;
+      for (const e of enemies) if (e.alive && !e.role && distTo(e) < 25 && e.state !== 'dead') { e.state = 'return'; e.t = 0; }
+      burst(P.pos.x, P.y + 1.2, P.pos.z, 50, 0xb48cff, 3, 4, 0.8, 0);
+      break;
+    }
+    case 'fire': {
+      for (let k = 0; k < 36; k++) {
+        const a = (k / 36) * Math.PI * 2;
+        for (const r of [2.5, 4.5, 6.5]) burst(P.pos.x + Math.cos(a) * r, P.y + 0.4, P.pos.z + Math.sin(a) * r, 2, k % 2 ? 0xff7a1a : 0xffd040, 2, 5, 0.7, -3);
+      }
+      for (const e of near(7.5)) { hurt(e, 1.6, 1); e.burnT = 4; e.burnDmg = Math.max(3, Math.round(pow * 0.18)); }
+      screenFlash(0.25);
+      break;
+    }
+    case 'golden': {
+      const ts = near(18).sort((a, b) => distTo(a) - distTo(b)).slice(0, 5);
+      ts.forEach((e, k) => setTimeout(() => {
+        if (!e.alive) return;
+        const top = new THREE.Vector3(e.pos.x + rand(-2, 2), ey(e) + 24, e.pos.z + rand(-2, 2));
+        spawnBolt(top, new THREE.Vector3(e.pos.x, ey(e), e.pos.z), 0xffe060);
+        spawnImpact(e.pos.x, ey(e), e.pos.z, { color: 0xffe060, size: 2.4 });
+        hurt(e, 2.0, 0.5);
+        if (e.alive && !isKing(e)) { e.state = 'hurt'; e.t = -0.6; }
+      }, k * 120));
+      if (!ts.length) spawnBolt(new THREE.Vector3(P.pos.x, P.y + 26, P.pos.z), new THREE.Vector3(P.pos.x + Math.sin(P.facing) * 5, P.y, P.pos.z + Math.cos(P.facing) * 5), 0xffe060);
+      screenFlash(0.4);
+      break;
+    }
+    case 'ice': {
+      for (let k = 0; k < 40; k++) {
+        const a = (k / 40) * Math.PI * 2;
+        burst(P.pos.x + Math.cos(a) * 3, P.y + 0.6, P.pos.z + Math.sin(a) * 3, 3, 0xbfe8ff, 6, 2, 0.8, 1);
+      }
+      for (const e of near(8)) {
+        hurt(e, 1.1, 0.2);
+        if (!e.alive) continue;
+        e.slowT = 6;
+        if (!isKing(e)) { e.state = 'hurt'; e.t = e.role ? -1.2 : -3; }
+        floatText(new THREE.Vector3(e.pos.x, ey(e) + 1.2, e.pos.z), 'Frozen', 'xp', 1);
+        burst(e.pos.x, ey(e), e.pos.z, 24, 0xdff4ff, 2, 2, 1.2, 0);
+      }
+      break;
+    }
+    case 'water': {
+      for (let k = 0; k < 48; k++) {
+        const a = (k / 48) * Math.PI * 2;
+        burst(P.pos.x + Math.cos(a) * 1.5, P.y + 0.5, P.pos.z + Math.sin(a) * 1.5, 3, 0x5ac8f0, 9, 3, 0.7, 6);
+      }
+      for (const e of near(8)) hurt(e, 0.9, 2.2);
+      const heal = Math.round(maxHp() * 0.33);
+      P.hp = Math.min(maxHp(), P.hp + heal);
+      floatText(headPos(), '+' + heal, 'heal', 1.2);
+      break;
+    }
+  }
+  floatText(new THREE.Vector3(P.pos.x, P.y + 3.2, P.pos.z), art.name, 'crit', 1.1);
+  P.artCd = art.cd;
+}
+
+// ---- Envoys, missions and alliances.
+const MISSION_TEXT = {
+  clear: (m, el) => `Drive off ${m.n} ${el.name} Oni in the wilds near ${el.village} (${m.have}/${m.n})`,
+  gift: (m, el) => `Carry a gift of ${m.gold} gold to the elder of ${el.village}`,
+  duel: (m, el) => `Defeat the Champion of ${el.village} under the sacred tree`,
+};
+function openEnvoy(k) {
+  const el = ELEMENTS[k], L = P.life;
+  if (!L) {
+    openModal(`<h2>Envoy of ${el.village}</h2><p>&ldquo;Peace under the tree, stranger.&rdquo;</p><div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
+    return;
+  }
+  if (k === L.village) {
+    openModal(`<h2>Envoy of ${el.village}</h2><p>&ldquo;Ah, one of ours! The other envoys watch you closely. Win them over, and ${el.village} will be stronger for it.&rdquo;</p>
+      ${relationsHtml()}<div class="btns"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
+    return;
+  }
+  const done = L.missions[k], rel = relName(k), m = L.mission;
+  let body;
+  if (L.age < RIVAL_AGE) body = `<p>&ldquo;Run along, child. The quarrels between villages are not for you&hellip; yet.&rdquo;</p>`;
+  else if (m && m.v === k) body = `<p>&ldquo;Well? ${el.village} is waiting.&rdquo;</p><p class="sub">Mission: ${MISSION_TEXT[m.type](m, el)}</p>`;
+  else if (m) body = `<p>&ldquo;Finish your business with ${ELEMENTS[m.v].village} first.&rdquo;</p>`;
+  else {
+    const type = done === 0 ? 'clear' : done === 1 ? 'gift' : done === 2 ? 'duel' : 'clear';
+    const pitch = {
+      clear: done >= 3 ? `&ldquo;Ally, the wild oni are restless again near ${el.village}. Will you help? We pay well.&rdquo;` : `&ldquo;You are from ${ELEMENTS[L.village].village}. Why should we trust you? Wild oni threaten our fields. Drive them off, and we will talk.&rdquo;`,
+      gift: `&ldquo;You kept your word. Now show respect: bring our elder a gift, and our gates will open to you.&rdquo;`,
+      duel: `&ldquo;One last test. Our champion will meet you here, under the tree. Win, and ${el.village} will stand beside you as an ally.&rdquo;`,
+    }[type];
+    body = `<p>${pitch}</p><div class="btns"><button data-act="mission|${k}">Accept the mission</button></div>`;
+  }
+  const ally = isAlly(k) && L.age >= RIVAL_AGE;
+  openModal(`<h2>Envoy of ${el.village} <span class="relbadge rel-${rel.replace(' ', '')}">${rel}</span></h2>
+    ${body}
+    ${ally ? (L.ally === k ? `<p class="sub">${el.name} warrior ${allyName(k)} travels with you.</p><div class="btns"><button class="secondary" data-act="dismiss">Send ${allyName(k)} home</button></div>`
+      : `<p class="sub">As an ally, ${el.village} will lend you a warrior to fight at your side.</p><div class="btns"><button data-act="recruit|${k}">Ask for a warrior</button></div>`) : ''}
+    <div class="btns" style="margin-top:10px"><button class="secondary" data-act="close">Farewell (E)</button></div>`, 'dialog');
+}
+function relationsHtml() {
+  return `<div class="relations">${ELEMENTS.map(el => `<div><b style="color:${el.css}">${el.kanji} ${el.village}</b><span class="relbadge rel-${relName(el.index).replace(' ', '')}">${relName(el.index)}</span></div>`).join('')}</div>`;
+}
+function startMission(k) {
+  const L = P.life, done = L.missions[k], el = ELEMENTS[k];
+  const type = done === 0 ? 'clear' : done === 1 ? 'gift' : done === 2 ? 'duel' : 'clear';
+  const m = { v: k, type, have: 0, n: type === 'clear' ? (done >= 3 ? 3 : 2) : 1, gold: 150 };
+  L.mission = m;
+  closeModal();
+  if (type === 'clear') for (const e of enemies) if (!e.alive && e.type === 'beast_' + el.key && !e.summoned) respawnEnemy(e);
+  if (type === 'duel') ensureChampion(k);
+  banner('Mission for ' + el.village, MISSION_TEXT[type](m, el), 3.2);
+  updateQuest();
+  save();
+}
+let champion = null;
+function ensureChampion(k) {
+  const el = ELEMENTS[k];
+  if (!champion || champion.type !== 'champion_' + el.key) {
+    if (champion) markDead(champion);
+    champion = createEnemy('champion_' + el.key, NW.x - 8, NW.z - 8, { role: 'champion', title: 'Champion of ' + el.village, facing: 0 });
+  } else if (!champion.alive) respawnEnemy(champion);
+  champion.talked = false;
+}
+// Bring older saves up to date and put the world in line with the life story.
+function syncRelations() {
+  const L = P.life;
+  if (!L) { if (champion?.alive) markDead(champion); spawnCompanion(); return; }
+  if (!L.rel) L.rel = ELEMENTS.map((_, k) => (k === L.village ? 100 : -30));
+  if (!L.missions) L.missions = [0, 0, 0, 0, 0];
+  if (L.mission === undefined) L.mission = null;
+  if (L.ally === undefined) L.ally = null;
+  if (L.mission?.type === 'duel') ensureChampion(L.mission.v);
+  else if (champion?.alive) markDead(champion);
+  spawnCompanion();
+}
+function deliverGift() {
+  const m = P.life.mission, el = ELEMENTS[m.v];
+  if (P.gold < m.gold) {
+    openModal(`<h2>Elder of ${el.village}</h2><p>&ldquo;You came with empty hands? Come back with ${m.gold} gold.&rdquo;</p><div class="btns"><button class="secondary" data-act="close">Leave</button></div>`, 'dialog');
+    return;
+  }
+  P.gold -= m.gold;
+  openModal(`<h2>Elder of ${el.village}</h2><p>&ldquo;A fine gift. Perhaps ${ELEMENTS[P.life.village].village} is not so bad after all.&rdquo;</p><div class="btns"><button data-act="close">Bow</button></div>`, 'dialog');
+  missionDone();
+}
+function missionDone() {
+  const L = P.life, m = L.mission, k = m.v, el = ELEMENTS[k];
+  const before = relName(k);
+  L.missions[k]++;
+  L.rel[k] = Math.min(100, L.rel[k] + 30);
+  L.mission = null;
+  const gold = L.missions[k] > 3 ? 150 : 40 * L.missions[k];
+  P.gold += gold;
+  gainXP(80 + 20 * L.missions[k]);
+  const after = relName(k);
+  if (after !== before && after === 'At peace') banner('Peace with ' + el.village, 'Their guards stand down, and their gates open to you.', 4);
+  else if (after !== before && after === 'Ally') banner('Alliance with ' + el.village + '!', 'Discounts in their shops, and their envoy will lend you a warrior.', 4.5);
+  else banner('Mission complete', `${el.village} thanks you. +${gold} gold`, 3);
+  burst(P.pos.x, P.y + 1.4, P.pos.z, 60, el.color, 3, 5, 1.2, 2);
+  updateQuest();
+  save();
+}
+// ---- A warrior from an allied village who travels and fights beside you.
+const ALLY_NAMES = ['Kuroha', 'Hibiki', 'Kinji', 'Shizuka', 'Ren'];
+const allyName = k => ALLY_NAMES[k];
+let companion = null;
+function recruitAlly(k) {
+  P.life.ally = k;
+  spawnCompanion();
+  closeModal();
+  banner(allyName(k) + ' joins you', `A ${ELEMENTS[k].name} warrior of ${ELEMENTS[k].village} will fight at your side.`, 3);
+  save();
+}
+function dismissAlly() {
+  P.life.ally = null;
+  spawnCompanion();
+  closeModal();
+  save();
+}
+function spawnCompanion() {
+  if (companion) { scene.remove(companion.rig.root); companion = null; }
+  const k = P.life?.ally;
+  if (k === null || k === undefined) return;
+  const el = ELEMENTS[k];
+  const rig = makeHumanoid({ cloth: el.color, cloth2: 0x1a1a1a, hat: 'band', bandColor: el.color, armor: 0x3a3a40, weapon: 'katana', skin: 0xd6a37e });
+  scene.add(rig.root);
+  companion = { k, rig, pos: P.pos.clone().add(new THREE.Vector3(2, 0, 2)), facing: 0, cd: 0, swing: 0, target: null };
+}
+function updateCompanion(dt) {
+  const c = companion;
+  if (!c) return;
+  const inside = inInterior(P.pos.x);
+  c.rig.root.visible = !inside;
+  if (inside) return;
+  if (Math.hypot(c.pos.x - P.pos.x, c.pos.z - P.pos.z) > 35) c.pos.set(P.pos.x - Math.sin(P.facing) * 2.5, 0, P.pos.z - Math.cos(P.facing) * 2.5);
+  // Pick the nearest foe that is fighting near the player.
+  if (!c.target || !c.target.alive || distTo(c.target) > 18) {
+    c.target = null;
+    let bd = 14;
+    for (const e of enemies) {
+      if (!e.alive || (e.faction !== undefined && !hostileTo(e.faction)) || e.state === 'idle' || e.state === 'return') continue;
+      const d = distTo(e);
+      if (d < bd) { bd = d; c.target = e; }
+    }
+  }
+  let tx, tz, stop;
+  if (c.target) { tx = c.target.pos.x; tz = c.target.pos.z; stop = c.target.def.radius + 1.4; }
+  else { tx = P.pos.x - Math.sin(P.facing) * 2.2 + Math.cos(P.facing) * 1.5; tz = P.pos.z - Math.cos(P.facing) * 2.2 - Math.sin(P.facing) * 1.5; stop = 0.8; }
+  const dx = tx - c.pos.x, dz = tz - c.pos.z, d = Math.hypot(dx, dz);
+  let moving = 0;
+  if (d > stop) {
+    const sp = Math.min(d - stop, (c.target ? 6.8 : d > 6 ? 9 : 6) * dt);
+    c.pos.x += dx / d * sp; c.pos.z += dz / d * sp;
+    moving = 1;
+  }
+  if (d > 0.1) c.facing = angleLerp(c.facing, Math.atan2(dx, dz), 1 - Math.exp(-10 * dt));
+  collideStatic(c.pos, 0.4);
+  c.cd -= dt;
+  if (c.target && d <= stop + 0.4 && c.cd <= 0) {
+    c.cd = 1.0; c.swing = 0.35;
+    const e = c.target, nx = (e.pos.x - c.pos.x) / (d || 1), nz = (e.pos.z - c.pos.z) / (d || 1);
+    const dmg = Math.round((10 + P.lvl * 3) * rand(0.9, 1.1));
+    spawnImpact(e.pos.x - nx * e.def.radius, height(e.pos.x, e.pos.z) + e.def.scale * 1.3, e.pos.z - nz * e.def.radius, { color: ELEMENTS[c.k].color, size: 1.3 });
+    damageEnemy(e, dmg, false, { mult: 1 }, nx, nz);
+  }
+  c.swing = Math.max(0, c.swing - dt);
+  c.rig.root.position.set(c.pos.x, height(c.pos.x, c.pos.z), c.pos.z);
+  c.rig.root.rotation.y = c.facing;
+  c.rig.armR.rotation.x = c.swing > 0 ? lerp(-2.4, 0.6, 1 - c.swing / 0.35) : lerp(c.rig.armR.rotation.x, REST_ARM, 0.15);
+  animateWalk(c.rig, dt, moving ? 1 : 0);
+}
+
 // ---- Going in and out of houses.
 function enterRoom(kind, out, id, town) {
   const room = rooms.find(r => r.kind === kind);
@@ -2732,7 +3067,15 @@ function drawNwMap(ctx, X, Z, scale, full) {
     ctx.fillStyle = known ? el.css : 'rgba(150,150,150,0.7)';
     ctx.beginPath(); ctx.arc(X(t.x), Z(t.z), Math.max(5, t.r * scale), 0, Math.PI * 2); ctx.fill();
     if (P.life?.village === t.element) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); }
-    if (full || scale > 0.5) { ctx.fillStyle = '#fff'; ctx.fillText(known ? el.kanji + ' ' + t.name : '???', X(t.x), Z(t.z) - Math.max(8, t.r * scale) - 4); }
+    if (full || scale > 0.5) {
+      ctx.fillStyle = '#fff';
+      ctx.fillText(known ? el.kanji + ' ' + t.name : '???', X(t.x), Z(t.z) - Math.max(8, t.r * scale) - 4);
+      if (full && P.life) {
+        const r = relName(t.element);
+        ctx.fillStyle = { Home: '#ffd860', Ally: '#7dff8a', 'At peace': '#dddddd', Rival: '#ff6a5a' }[r];
+        ctx.fillText(r, X(t.x), Z(t.z) + Math.max(8, t.r * scale) + 14);
+      }
+    }
   }
   if (full) { ctx.fillStyle = '#f6d8ec'; ctx.fillText('The Crossroads', X(NW.x), Z(NW.z) + 26); }
   for (const m of pickups) { ctx.fillStyle = '#fff6a0'; ctx.fillRect(X(m.position.x) - 2, Z(m.position.z) - 2, 4, 4); }
@@ -2765,6 +3108,7 @@ function interactLabel(it) {
       : it.kind === 'well' ? 'Draw water from the well'
       : it.kind === 'house' ? 'Go inside the house'
       : it.kind === 'exit' ? 'Step outside'
+      : it.kind === 'envoy' ? `Speak with the envoy of ${ELEMENTS[it.element].village}${P.life ? ' (' + relName(it.element) + ')' : ''}`
       : it.kind === 'stash' ? (P.looted.includes(P.houseId) ? 'The cupboard is empty' : 'Search the cupboard')
       : it.kind === 'bed' ? (P.houseId === 'home' ? 'Sleep in your futon (heal &amp; save)' : 'Rest on the futon')
       : 'Talk to the elder';
@@ -2819,7 +3163,7 @@ function updateWorldState(dt) {
     hud.locSub.textContent = hubD < 40 ? 'The great sacred tree' : P.life && P.life.age < 10 ? 'Stay close to the path, little one' : 'Spirits roam here';
   } else if (nwOn && t) {
     hud.locName.textContent = t.name;
-    hud.locSub.textContent = ELEMENTS[t.element].name + ' village' + (P.life?.village === t.element ? ' · home' : ' · shop · shrine');
+    hud.locSub.textContent = ELEMENTS[t.element].name + ' village · ' + (P.life ? (P.life.village === t.element ? 'home' : relName(t.element).toLowerCase()) : 'shop · shrine');
   } else if (realm) {
     const i = DEMON_BASES.indexOf(realm);
     hud.locName.textContent = realm.name;
@@ -2991,6 +3335,7 @@ function startGame(s) {
   });
   DEMON_BASES.forEach((db, i) => { if (P.warlordsDead.includes(i) && db.warlordEnemy.alive) markDead(db.warlordEnemy); });
   syncLife();
+  syncRelations();
   placeAtTown(P.lastTown);
   rebuildPlayerRig();
   closeModal();
@@ -3030,7 +3375,8 @@ function frame() {
     if (hitstop > 0) { hitstop -= dt; dt *= 0.08; }
     else if (slowmo > 0) { slowmo -= dt; dt *= 0.35; }
     time += dt;
-    const playerSafe = P.dead || !!townAt(P.pos.x, P.pos.z);
+    const here = townAt(P.pos.x, P.pos.z);
+    const playerSafe = P.dead || (!!here && !(here.nw && hostileTo(here.element)));
     if (special) {
       // The world nearly freezes while the samurai moves at full speed.
       updateSpecial(Math.min(0.05, rawDt));
@@ -3045,6 +3391,7 @@ function frame() {
     updateNPCs(dt);
     updatePortals(dt);
     updatePickups(dt);
+    updateCompanion(dt);
     updateEffects(dt);
     updateParticles(dt);
     updateWorldState(dt);

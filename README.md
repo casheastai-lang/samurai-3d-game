@@ -90,6 +90,31 @@ Paths link every village to the Crossroads, to its neighbors, to the two village
 
 Your home is in your village: talk to your family by the door, go inside, and sleep in your futon to heal and save.
 
+### Village arts
+
+Each village teaches its own power. Your sensei teaches it to you at age 8; press **V** to use it. Arts grow stronger as you grow up.
+
+| Village | Art (V) | What it does |
+| --- | --- | --- |
+| Shadow | Shadow Step | Vanish and strike the nearest foe from behind; nearby foes lose sight of you |
+| Fire | Flame Burst | A ring of fire burns every foe around you |
+| Golden | Golden Thunder | Lightning strikes up to five foes |
+| Ice | Frost Nova | Freezes every foe around you for a few seconds |
+| Water | Healing Tide | A wave hurls foes away and heals a third of your health |
+
+### Rivals, missions and allies
+
+From age 14 the other four villages are your **rivals**. Their gate guards attack you, and their shops and shrines turn you away.
+Messengers carrying a letter are let through.
+
+An envoy from every village waits under the sacred tree at the Crossroads. Their missions win a village over:
+1. **Clear the wilds:** drive off the oni near their village. This brings **peace**, and their guards stand down.
+2. **A gift:** bring 150 gold to their elder.
+3. **Duel of honor:** defeat their champion under the tree. The village becomes your **ally**.
+
+Allies give you 20% off in their shops. Their envoy will also lend you a **warrior who travels with you and fights at your side**.
+Allied envoys keep offering missions for gold. The map (M) shows where you stand with every village.
+
 ### Going inside houses
 
 Every house in every village and city has a door. Walk up to it and press **E** to go inside.
