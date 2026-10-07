@@ -3130,6 +3130,7 @@ function graduate() {
   P.weapon = 'steel';
   rebuildPlayerRig();
   rebuildCompanions();
+  updateQuest();
   screenFlash(0.5);
   openModal(`<div class="kanji">${el.kanji}</div><h2 class="center">Graduation Day</h2>
     <p>${ACADEMY_MASTER[L.village]} ties the ${el.name} headband around your forehead. &ldquo;You passed every lesson. You are a true student of ${el.village} now.&rdquo;</p>
