@@ -37,7 +37,7 @@ float toonBand(float x) {
 const inkShader = {
   uniforms: {
     tColor: { value: null }, tDepth: { value: null }, uTexel: { value: new THREE.Vector2() },
-    uNear: { value: 0.1 }, uFar: { value: 3000 }, uThick: { value: 1 }, uStrength: { value: 0.85 },
+    uNear: { value: 0.1 }, uFar: { value: 3000 }, uThick: { value: 1 }, uStrength: { value: 0.95 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `uniform sampler2D tColor, tDepth; uniform vec2 uTexel; uniform float uNear, uFar, uThick, uStrength; varying vec2 vUv;
@@ -74,7 +74,7 @@ export class InkScenePass extends Pass {
   setSize(w, h) {
     this.rt.setSize(w, h);
     this.material.uniforms.uTexel.value.set(1 / w, 1 / h);
-    this.material.uniforms.uThick.value = Math.max(1, h / 800);
+    this.material.uniforms.uThick.value = Math.max(1.5, h / 520);
   }
   render(renderer, writeBuffer) {
     const u = this.material.uniforms;

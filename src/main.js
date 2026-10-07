@@ -2507,6 +2507,11 @@ function startNewLife(k) {
     fade.style.opacity = '0';
     ui = null;
     // A new body for a new life: design your child before stepping out.
+    // Leave the old world's HUD behind (the Demon King's bar, his shrine's name).
+    engaged = null;
+    hud.bossbar.classList.add('hidden');
+    hud.locName.textContent = el.village;
+    hud.locSub.textContent = el.name + ' village · home';
     P.pastLook = { ...P.look };
     P.look = { ...DEFAULT_LOOK, hat: 'none', hairStyle: 'spiky', cloth: LOOK_OPTIONS.cloth[k % LOOK_OPTIONS.cloth.length] };
     P.skin = 'custom';

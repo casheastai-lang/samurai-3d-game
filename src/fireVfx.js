@@ -55,7 +55,7 @@ float density(vec3 p, out float temp){
     float tongue = 0.5 + 0.5 * sin(ang * uTongues + fbm3(q * 1.3) * 6.0 + uSeed);
     r *= mix(1.0, 0.4 + 0.8 * tongue, smoothstep(0.15, 0.7, h));
     d = 1.0 - length(xz) / r + (fbm3(q * 2.0) - 0.5) * 0.5;
-    temp = clamp(d * 1.5 * (1.0 - h * 0.9), 0.0, 1.0);
+    temp = clamp(d * 1.25 * pow(1.0 - h, 1.4), 0.0, 1.0);
   } else {
     // Fire whirl: flame wound into helical sheets around a rising column.
     float ang = atan(xz.y, xz.x), rad = length(xz), ring = 0.16 + h * 0.24;
@@ -78,7 +78,7 @@ void main(){
     if (i >= uSteps) break;
     vec3 p = ro + rd * (tn + (float(i) + 0.5) * stepL);
     float temp; float d = density(p, temp);
-    if (d > 0.001) { float a = d * stepL * 6.0; col += ramp(temp) * a * tr * (0.6 + temp * 2.6); tr *= exp(-a * 0.5); }
+    if (d > 0.001) { float a = d * stepL * 6.0; col += ramp(temp) * a * tr * (0.35 + temp * temp * 2.2); tr *= exp(-a * 0.5); }
   }
   gl_FragColor = vec4(col * uIntensity, 1.0);
 }`;
@@ -241,7 +241,7 @@ export function fireWall(x, z, radius, { clumps = 10, life = 1.8, power = 1 } = 
     for (let t = 0; t < tongues; t++) {
       const o = (t - (tongues - 1) / 2) * 0.55;
       const fx = cx - Math.sin(a) * o + (Math.random() - 0.5) * 0.3, fz = cz + Math.cos(a) * o + (Math.random() - 0.5) * 0.3;
-      const f = makeFlame({ x: fx, y: gy - 0.1, z: fz, w: 0.8 + Math.random() * 0.5, h: (1.6 + Math.random() * 1.6) * power, tongues: 3 + Math.floor(Math.random() * 3), intensity: 1.1 });
+      const f = makeFlame({ x: fx, y: gy - 0.1, z: fz, w: 0.8 + Math.random() * 0.5, h: (1.6 + Math.random() * 1.6) * power, tongues: 3 + Math.floor(Math.random() * 3), intensity: 0.85 });
       f.life = life * (0.85 + Math.random() * 0.3);
       f.fadeIn = 0.12 + c * 0.012;
     }
