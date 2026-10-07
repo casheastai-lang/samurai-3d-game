@@ -166,6 +166,25 @@ Before each boss fight (ninja masters, demon warlords and the Demon King) the bo
 - **Taunt**: the boss hits 25% harder, takes 25% more damage and drops 60% more gold.
 - **Ask how they fight**: hear a hint about their moves, then choose again.
 
+### How enemies fight
+
+Every enemy has a moveset. Every attack is telegraphed: the enemy glows as it winds up, a **!** warns of lunges and leaps, and a red ring on the ground marks a slam.
+Slams and stomps can't be blocked, so jump or roll. Some heavy moves (charges, slams) have armor, so hitting the enemy won't interrupt them.
+
+| Enemy | Moves |
+| --- | --- |
+| Bandits | Slash, double slash, running lunge |
+| Ninjas and ninja guards | Quick slash, shuriken, leap strike (they keep their distance and throw) |
+| Ninja masters | Flurry, fans of shuriken, leap strike, feints |
+| Red / blue oni, wild oni | Overhead smash, wide sweep, stomp; blue oni also charge with their shoulder |
+| Oni captains | Three-hit combo, smash, stomp, shoulder charge |
+| Warlords | Combo, sweep, armored slam, charge |
+| Demon King and his Echo | Combo, sweep, great slam, unstoppable charge |
+| Imps | Bite and pounce |
+| Champions | Flurry, lunge, feints |
+
+Groups fight like a real gang: only two ordinary enemies attack you at once, while the rest circle and wait for an opening.
+
 ### Rules
 
 - **Towns are safe.** Demons won't follow you inside.
@@ -185,5 +204,7 @@ Progress is saved in the browser's localStorage.
 - `src/world.js`: terrain, lakes, sky, grass and trees with wind, towns, ninja bases, demon fortresses
 - `src/textures.js`: procedural textures (plaster, wood, roof tiles, stone, shoji, fabric, bark, water ripples)
 - `src/fx.js`: particles, sword trails, lightning, ambient petals and embers
+- `src/enemyMoves.js`: enemy moves as data (telegraph, active windows, recovery, contact shapes), movesets, move selection, contact checks and content validation
+- `tests/`: automated tests for the enemy move system (`node --test tests/*.test.mjs`)
 - `src/main.js`: player, combat, enemy AI, shurikens, portals, shops, inventory, UI
 - `vendor/`: Three.js and its bloom post-processing add-ons

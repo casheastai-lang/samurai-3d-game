@@ -10,6 +10,10 @@ import {
   NINJA_BASES, NINJA_R, DEMON_BASES, DEMON_R, BOSS_TALK, LOOK_OPTIONS, HAT_NAMES, DEFAULT_LOOK, FROST,
   ELEMENTS, NW, NW_TOWNS, NEW_X,
 } from './data.js';
+import {
+  MOVES, ENEMY_STYLES, archetypeOf, validateContent, selectMove, phaseAt, spawnsBetween, resolveContacts,
+  lungeSpeed, activeLength, totalTime, engageRange, AttackTokens,
+} from './enemyMoves.js';
 import { makeHumanoid, makeEnemyModel, makeShuriken, setLod, setSheathed, makeArrowMesh, setBowDraw } from './models.js';
 import { $, clamp, lerp, smooth, rand, randInt, angleLerp, wr, wrand } from './util.js';
 import {
@@ -532,7 +536,7 @@ function startAttack(base, combo) {
   spawnSwing({ ...SWINGS[A.anim], follow: playerFollow, color: slashColor(), radius: A.range * 0.95, delay: Math.max(0, A.hitAt - 0.08) });
   // Ninjas read your attack and may leap away.
   for (const e of enemies) {
-    if (!e.alive || !e.def.evade || e.evadeCd > 0 || ['windup', 'strike', 'throw'].includes(e.state)) continue;
+    if (!e.alive || !e.def.evade || e.evadeCd > 0 || e.state === 'move') continue;
     if (distTo(e) < A.range + 2 && Math.random() < e.def.evade) {
       const dx = e.pos.x - P.pos.x, dz = e.pos.z - P.pos.z, d = Math.hypot(dx, dz) || 1;
       e.kb.set(dx / d, 0, dz / d).multiplyScalar(13);
@@ -1258,7 +1262,9 @@ function updateProjectiles(dt) {
 
 // ============================================================ Enemies
 const enemies = [];
-let boss = null, echo = null;
+let boss = null, echo = null, enemyUid = 0;
+// At most two ordinary enemies attack the player at once; the others circle and wait.
+const attackTurns = new AttackTokens(2);
 const barGeoBg = new THREE.PlaneGeometry(1.3, 0.14);
 const barGeoFg = new THREE.PlaneGeometry(1.3, 0.14).translate(0.65, 0, 0);
 const barMatBg = new THREE.MeshBasicMaterial({ color: 0x1a0505, transparent: true, opacity: 0.75, depthTest: false });
@@ -1283,7 +1289,11 @@ function createEnemy(type, x, z, opts = {}) {
     summoned: !!opts.summoned, role: opts.role ?? null, base: opts.base ?? null, title: opts.title ?? def.name,
     phase: 1, struck: false, bar: null, moveFrac: 0, chargeDir: new THREE.Vector3(), slamR: 7,
     slowT: 0, burnT: 0, burnDmg: 0, burnTick: 0, evadeT: 0, evadeCd: 0, rangedCd: rand(0.5, 2), parried: false,
+    // Combat runtime: the archetype (authored, shared) and this instance's own clocks.
+    uid: ++enemyUid, arch: archetypeOf(type), move: null, cooldowns: {}, strafeDir: Math.random() < 0.5 ? -1 : 1, strafeT: rand(1, 3),
   };
+  e.style = ENEMY_STYLES[e.arch.style];
+  e.reach = engageRange(e.arch.moves);
   e.hp = e.maxHp;
   if (!e.role) {
     const g = new THREE.Group();
@@ -1397,11 +1407,13 @@ function damageEnemy(e, dmg, crit, A, nx, nz) {
   e.hitFront = -(nx * fx + nz * fz);
   e.hitSide = nx * fz - nz * fx;
   if (e.hp <= 0) { killEnemy(e); return; }
-  if (stagger && e !== boss) { e.state = 'hurt'; e.t = 0; e.glow = 0; }
+  const armored = e.move && MOVES[e.move.id].armor;
+  if (stagger && e !== boss && !armored) { e.state = 'hurt'; e.t = 0; e.glow = 0; }
   if (e === boss && e.phase === 1 && e.hp < e.maxHp * 0.5) enrageBoss(e);
 }
 
 function killEnemy(e) {
+  endMove(e);
   e.alive = false; e.deadT = 0; e.state = 'dead'; e.hp = 0;
   e.burnT = 0; e.slowT = 0;
   if (e.bar) e.bar.visible = false;
@@ -1473,17 +1485,156 @@ function setEmissive(e) {
   }
 }
 
-function specialMove(e, dist) {
-  const r = Math.random();
-  if (isKing(e) && dist > 13 && r < 0.55) { e.state = 'chargeWind'; e.t = 0; return true; }
-  const slamR = isKing(e) ? 9 : 7;
-  if (dist < slamR + 2 && r < (e.phase === 2 ? 0.5 : 0.3)) {
-    e.state = 'slamWind'; e.t = 0;
-    e.slamR = slamR;
-    spawnRing(e.pos.x, e.pos.z, slamR, e.phase === 2 ? 0.8 : 1.05);
-    return true;
+// ---- The move runner: one clock per move instance, driven by the authored definition.
+// Pose from the move's semantic animation id and its phase.
+function poseEnemy(e) {
+  const rig = e.rig, arm = rig.armR;
+  rig.body.position.y = 1.0;
+  if (e.state === 'hurt') {
+    rig.body.rotation.x = lerp(rig.body.rotation.x, -0.4 * (e.hitFront ?? 1), 0.35);
+    rig.body.rotation.z = lerp(rig.body.rotation.z, 0.3 * (e.hitSide ?? 0), 0.35);
+    return;
   }
-  return false;
+  if (!e.move) { restArm(rig, 0.12); rig.armL.rotation.x = lerp(rig.armL.rotation.x, 0, 0.12); return; }
+  const m = MOVES[e.move.id], t = e.move.t;
+  const wind = smooth(0, m.startup * 0.8, t);
+  const a = t - m.startup;
+  // Which swing of a combo is under way, and how far through it.
+  let wi = 0;
+  m.windows.forEach((w, i) => { if (a >= w.at - 0.25) wi = i; });
+  const w = m.windows[wi];
+  const strike = w ? smooth(w.at - 0.02, w.at + 0.1, a) : 0;
+  const alt = wi % 2 === 1;
+  switch (m.anim) {
+    case 'overhead':
+    case 'combo':
+      if (a < 0) { arm.rotation.set(lerp(REST_ARM, -2.9, wind), 0, 0); wrist(rig, lerp(rig.wristRest, -0.6, wind), 0.5); rig.body.rotation.x = -0.15 * wind; }
+      else if (m.anim === 'combo' && alt) { arm.rotation.set(-1.6, lerp(1.3, -1.3, strike), 0); rig.body.rotation.x = 0.1; }
+      else { arm.rotation.set(lerp(-2.9, -0.4, strike), 0, 0); rig.weapon.rotation.x = lerp(-0.6, -0.25, strike); rig.body.rotation.x = lerp(-0.15, 0.25, strike); }
+      break;
+    case 'sweep':
+      if (a < 0) { arm.rotation.set(lerp(REST_ARM, -1.6, wind), lerp(0, 1.4, wind), 0); rig.body.rotation.y = 0.4 * wind; }
+      else { arm.rotation.set(-1.6, lerp(1.4, -1.4, strike), 0); rig.body.rotation.y = lerp(0.4, -0.4, strike); }
+      break;
+    case 'thrust':
+      if (a < 0) { arm.rotation.set(lerp(REST_ARM, -0.6, wind), 0, 0); rig.body.rotation.x = -0.1 * wind; }
+      else { arm.rotation.set(lerp(-0.6, -1.7, strike), 0, 0); rig.body.rotation.x = 0.3 * strike; }
+      break;
+    case 'throw':
+      arm.rotation.set(a < 0 ? lerp(REST_ARM, -2.6, wind) : lerp(-2.6, -1.2, smooth(0, 0.15, a)), 0.5, 0);
+      break;
+    case 'slam':
+      if (a < 0) { arm.rotation.set(lerp(REST_ARM, -3.0, wind), 0, 0); rig.armL.rotation.x = lerp(0, -3.0, wind); rig.body.rotation.x = -0.2 * wind; }
+      else { arm.rotation.set(-0.4, 0, 0); rig.armL.rotation.x = -0.4; rig.body.rotation.x = 0.35; rig.body.position.y = 0.85; }
+      break;
+    case 'charge':
+      rig.body.rotation.x = a < 0 ? 0.2 * wind : 0.35;
+      arm.rotation.set(-1.2, 0, 0);
+      wrist(rig, -0.3, 0.3);
+      break;
+    case 'leap': {
+      if (a < 0) { rig.body.position.y = 1.0 - 0.25 * wind; arm.rotation.set(lerp(REST_ARM, -2.6, wind), 0, 0); }
+      else {
+        const L = m.lunge, k = clamp(a / (L.until + 0.1), 0, 1);
+        rig.body.position.y = 1.0 + Math.sin(k * Math.PI) * 1.4;
+        arm.rotation.set(lerp(-2.6, -0.4, strike), 0, 0);
+        rig.body.rotation.x = 0.3 * strike;
+      }
+      break;
+    }
+    default: restArm(rig, 0.12);
+  }
+}
+// Recent moves started, for debugging and automated playthroughs.
+const moveLog = [];
+function startMove(e, id) {
+  const m = MOVES[id];
+  moveLog.push({ type: e.type, id, at: time });
+  if (moveLog.length > 300) moveLog.shift();
+  e.move = { id, t: 0, prevT: -1, hits: new Set(), dir: null };
+  e.state = 'move'; e.t = 0;
+  // Telegraphs: everything that hurts is shown before it lands.
+  if (m.telegraph === 'ring') {
+    const r = m.windows[0].shape.radius;
+    spawnRing(e.pos.x, e.pos.z, r, m.startup / moveTempo(e));
+  } else if (m.telegraph === 'flash' && !e.far) {
+    floatText(new THREE.Vector3(e.pos.x, height(e.pos.x, e.pos.z) + e.def.scale * 2.4 + 0.5, e.pos.z), '!', 'alert', 0.6);
+  }
+  if (m.announce && e.role) banner('', `${e.title} ${m.announce}`, 0.9);
+}
+function endMove(e) {
+  if (e.move) e.cooldowns[e.move.id] = MOVES[e.move.id].cooldown;
+  e.move = null;
+  attackTurns.release(e.uid);
+}
+// Bosses fight faster when enraged; frost slows everything.
+const moveTempo = e => (e.phase === 2 ? 1.3 : 1) * (e.slowT > 0 ? 0.5 : 1);
+// Effects for a contact window as it opens.
+function moveFeedback(e, m, w) {
+  if (e.far) return;
+  const demon = DEMON_TYPES.has(e.type);
+  const gy = height(e.pos.x, e.pos.z);
+  if (m.vfx === 'swing-v' || m.vfx === 'swing-h' || m.vfx === 'thrust') {
+    const reach = (w.shape?.reach ?? 1) + e.def.radius;
+    spawnSwing({
+      follow: () => ({ x: e.pos.x, y: gy, z: e.pos.z, facing: e.facing }),
+      plane: m.vfx === 'swing-h' ? 'h' : 'v', dir: m.vfx === 'swing-h' ? 1 : -1, color: demon ? 0xff6a3a : 0xdfe8ff,
+      radius: reach, arc: w.shape?.kind === 'arc' ? Math.min(3.6, w.shape.arc) : 1.2, sweep: 1.3,
+      life: 0.22, height: 1.25 * e.def.scale, intensity: demon ? 0.8 : 0.6,
+    });
+  } else if (m.vfx === 'slam') {
+    shake(m.tags.includes('heavy') ? 0.8 : 0.4);
+    burst(e.pos.x, gy + 0.5, e.pos.z, m.tags.includes('heavy') ? 90 : 40, 0xff6a2a, 12, 5, 0.9, 10);
+  }
+}
+function runMove(e, dt, dist, dx, dz, turnTo, toPlayer) {
+  const m = MOVES[e.move.id], mv = e.move;
+  mv.prevT = mv.t;
+  mv.t += dt * moveTempo(e);
+  const phase = phaseAt(m, mv.t);
+  let speed = 0;
+  if (phase === 'startup') {
+    turnTo(toPlayer, m.track);
+    e.glow = Math.min(1, mv.t / m.startup) * (m.telegraph === 'flash' ? 1 : 0.8);
+  } else {
+    e.glow = 0;
+    if (phase === 'active' && mv.dir === null) mv.dir = e.facing;
+    if (!m.lunge?.locked && phase === 'active') turnTo(toPlayer, m.track * 0.3);
+    speed = lungeSpeed(m, mv.t);
+    // Effects as each window opens; projectiles spawn exactly once.
+    m.windows.forEach((w, i) => {
+      const at = m.startup + w.at;
+      if (mv.prevT < at && mv.t >= at && w.shape) moveFeedback(e, m, w);
+    });
+    for (const i of spawnsBetween(m, mv.prevT, mv.t)) {
+      const sp = m.windows[i].spawn;
+      for (let k = 0; k < sp.count; k++) throwShuriken(e, sp.count > 1 ? (k - (sp.count - 1) / 2) * (sp.spread ?? 0.2) : 0);
+    }
+    // Contacts: resolved against the player's body once per window.
+    const airborne = P.y - height(P.pos.x, P.pos.z) > 0.7;
+    const atk = { x: e.pos.x, z: e.pos.z, facing: m.lunge?.locked ? mv.dir : e.facing, r: e.def.radius };
+    const tgt = { x: P.pos.x, z: P.pos.z, r: 0.45 };
+    if (!P.dead && Math.abs(P.y - height(P.pos.x, P.pos.z)) < 1.8 || m.windows.some(w => w.jumpable)) {
+      for (const i of resolveContacts(m, mv.t, mv.hits, atk, tgt)) {
+        const w = m.windows[i];
+        if (w.jumpable && airborne) { floatText(headPos(), 'Dodged!', 'xp', 0.7); continue; }
+        const landed = damagePlayer(e.dmg * w.dmg, e, { unblockable: !!w.unblockable });
+        if (landed && w.knock) { const d = Math.hypot(dx, dz) || 1; P.kb.set(dx / d, 0, dz / d).multiplyScalar(w.knock); }
+        if (m.tags.includes('heavy') || m.tags.includes('charge')) shake(0.3);
+      }
+    }
+    if (m.lunge?.locked && speed > 0 && Math.random() < 0.5) burst(e.pos.x, height(e.pos.x, e.pos.z) + 0.3, e.pos.z, 2, 0x8a6a4a, 2, 1, 0.5, 3);
+    // The Demon King's charge stops at the edge of his arena.
+    if (e === boss && m.lunge?.locked && arenaDist(e.pos.x, e.pos.z) > ARENA.r + 6) mv.t = Math.max(mv.t, m.startup + activeLength(m));
+  }
+  if (phase === 'done') { endMove(e); e.state = 'chase'; e.cd = rand(0.15, 0.6); return [0, 0, 0]; }
+  const dir = m.lunge?.locked && mv.dir !== null ? mv.dir : e.facing;
+  return [Math.sin(dir), Math.cos(dir), speed];
+}
+// Pick a legal move for this moment, or null.
+function chooseMove(e, dist, toPlayer) {
+  const angle = Math.abs(Math.atan2(Math.sin(toPlayer - e.facing), Math.cos(toPlayer - e.facing)));
+  return selectMove(e.arch.moves, { dist: Math.max(0, dist - e.def.radius * 0.5), angle, cooldowns: e.cooldowns, rng: Math.random });
 }
 
 const activeList = [];
@@ -1527,13 +1678,17 @@ function updateEnemies(dt, playerSafe) {
     }
     const slow = e.slowT > 0 ? 0.5 : 1;
     const sp = d.speed * (e.phase === 2 ? 1.3 : 1) * slow;
-    const wind = d.windup * (e.phase === 2 ? 0.75 : 1) / slow;
     let moveSpeed = 0, mvx = 0, mvz = 0;
     const toPlayer = Math.atan2(dx, dz);
     const turnTo = (ang, k) => { e.facing = angleLerp(e.facing, ang, 1 - Math.exp(-k * dt)); };
     const homeDist = Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z);
     const leash = isKing(e) ? 55 : e.role ? 45 : 75;
-    const special = isKing(e) || e.role === 'warlord';
+    for (const id in e.cooldowns) e.cooldowns[id] -= dt;
+    // Anything that knocked the enemy out of its move (a parry, a stagger, a freeze) ends it.
+    if (e.move && e.state !== 'move') endMove(e);
+    const leaving = () => (playerSafe && !e.spar) || dist > d.aggro * 2.6 || homeDist > leash || (e.faction !== undefined && !hostileTo(e.faction)) || P.dead;
+    // Ordinary enemies need an attack turn; bosses and duelists of honor do not.
+    const needsTurn = e.style.token && !e.role;
 
     switch (e.state) {
       case 'idle': {
@@ -1563,59 +1718,42 @@ function updateEnemies(dt, playerSafe) {
       }
       case 'chase': {
         e.glow = 0;
-        if ((playerSafe && !e.spar) || dist > d.aggro * 2.6 || homeDist > leash || (e.faction !== undefined && !hostileTo(e.faction))) { e.state = 'return'; break; }
+        if (leaving()) { e.state = 'return'; break; }
         turnTo(toPlayer, 8);
-        if (special && e.cd <= 0 && specialMove(e, dist)) break;
-        if (d.ranged && e.rangedCd <= 0 && dist > d.ranged.min && dist < d.ranged.max) { e.state = 'throw'; e.t = 0; break; }
-        if (dist < d.range + 0.3 && e.cd <= 0) { e.state = 'windup'; e.t = 0; }
-        else if (dist > d.range * 0.75) {
+        if (e.cd <= 0) {
+          const id = chooseMove(e, dist, toPlayer);
+          if (id && (!needsTurn || attackTurns.request(e.uid))) { startMove(e, id); break; }
+        }
+        // Without a turn, hold back and circle once close enough.
+        if (needsTurn && !attackTurns.has(e.uid) && dist < e.style.circle + 1.5) { e.state = 'circle'; e.t = 0; break; }
+        const want = Math.max(e.reach * 0.75, e.arch.style === 'skirmisher' ? 0 : 0);
+        if (dist > want) {
           mvx = dx / dist; mvz = dz / dist; moveSpeed = sp;
-          // Ninjas weave side to side as they close in.
-          if (d.ranged) { const s = Math.sin(time * 3 + e.home.x); mvx += -dz / dist * s * 0.8; mvz += dx / dist * s * 0.8; }
+          if (e.style.strafe > 0.9) { const w = Math.sin(time * 3 + e.home.x); mvx += -dz / dist * w * 0.8; mvz += dx / dist * w * 0.8; }
         }
         break;
       }
-      case 'throw': {
-        turnTo(toPlayer, 10);
-        if (e.t >= 0.32) {
-          const fan = d.ranged.fan ?? 1;
-          for (let k = 0; k < fan; k++) throwShuriken(e, fan > 1 ? (k - (fan - 1) / 2) * 0.22 : 0);
-          e.rangedCd = d.ranged.cd * rand(0.8, 1.3);
-          e.state = 'recover'; e.t = d.recover * 0.5;
-        }
-        break;
-      }
-      case 'windup': {
-        turnTo(toPlayer, 5);
-        e.glow = Math.min(1, e.t / wind) * 0.8;
-        if (e.t >= wind) {
-          e.state = 'strike'; e.t = 0; e.struck = false;
-          if (!e.far) {
-            const demon = DEMON_TYPES.has(e.type);
-            spawnSwing({
-              follow: () => ({ x: e.pos.x, y: height(e.pos.x, e.pos.z), z: e.pos.z, facing: e.facing }),
-              plane: 'v', dir: -1, color: demon ? 0xff6a3a : 0xdfe8ff, radius: d.range + 0.3, arc: 2.0, sweep: 1.3,
-              life: 0.22, height: 1.25 * d.scale, intensity: demon ? 0.8 : 0.6,
-            });
-          }
-        }
-        break;
-      }
-      case 'strike': {
+      case 'circle': {
+        // Waiting for a turn: strafe around the player at a respectful distance, feinting in now and then.
         e.glow = 0;
-        if (e.t < 0.1) { mvx = Math.sin(e.facing); mvz = Math.cos(e.facing); moveSpeed = 4; }
-        if (!e.struck && e.t >= 0.08) {
-          e.struck = true;
-          const fx = Math.sin(e.facing), fz = Math.cos(e.facing);
-          const dot = dist > 0.01 ? (dx * fx + dz * fz) / dist : 1;
-          if (dist < d.range + 0.9 && dot > 0.1 && Math.abs(P.y - height(P.pos.x, P.pos.z)) < 1.6) damagePlayer(e.dmg, e);
-          if (special) shake(0.25);
-        }
-        if (e.t >= 0.28 && e.state === 'strike') { e.state = 'recover'; e.t = 0; }
+        if (leaving()) { e.state = 'return'; break; }
+        turnTo(toPlayer, 8);
+        e.strafeT -= dt;
+        if (e.strafeT <= 0) { e.strafeDir *= -1; e.strafeT = rand(1.2, 3.2); }
+        const r = e.style.circle, tx = -dz / dist, tz = dx / dist;
+        const radial = clamp((dist - r) * 0.8, -1, 1);
+        mvx = tx * e.strafeDir * e.style.strafe + dx / dist * radial;
+        mvz = tz * e.strafeDir * e.style.strafe + dz / dist * radial;
+        moveSpeed = sp * 0.55;
+        // Ranged enemies keep throwing while they wait.
+        const ranged = e.arch.moves.find(id => MOVES[id].tags.includes('ranged'));
+        if (ranged && e.cd <= 0) { const id = chooseMove(e, dist, toPlayer); if (id && MOVES[id].tags.includes('ranged')) { startMove(e, id); break; } }
+        if (e.t > 0.4 && attackTurns.request(e.uid)) { e.state = 'chase'; e.cd = 0; }
         break;
       }
-      case 'recover': {
-        if (e.t >= d.recover * (e.phase === 2 ? 0.7 : 1)) { e.state = 'chase'; e.cd = rand(0.2, 0.9); }
+      case 'move': {
+        const [fx, fz, spd] = runMove(e, dt, dist, dx, dz, turnTo, toPlayer);
+        mvx = fx; mvz = fz; moveSpeed = spd * slow;
         break;
       }
       case 'hurt': {
@@ -1624,40 +1762,12 @@ function updateEnemies(dt, playerSafe) {
       }
       case 'return': {
         e.glow = 0;
+        attackTurns.release(e.uid);
         const tx = e.home.x - e.pos.x, tz = e.home.z - e.pos.z, tl = Math.hypot(tx, tz);
         e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.25 * dt);
         if (tl < 1.5) { e.state = 'idle'; e.hp = e.maxHp; if (e === boss) e.phase = 1; }
         else { mvx = tx / tl; mvz = tz / tl; moveSpeed = sp; turnTo(Math.atan2(tx, tz), 6); }
-        if (!playerSafe && dist < d.aggro * 0.6) e.state = 'chase';
-        break;
-      }
-      case 'slamWind': {
-        turnTo(toPlayer, 2);
-        if (e.t >= (e.phase === 2 ? 0.8 : 1.05)) {
-          e.state = 'recover'; e.t = -0.3;
-          shake(0.8);
-          burst(e.pos.x, height(e.pos.x, e.pos.z) + 0.5, e.pos.z, 90, 0xff6a2a, 12, 5, 0.9, 10);
-          const airborne = P.y - height(P.pos.x, P.pos.z) > 0.7;
-          if (dist < e.slamR + 0.3 && !airborne) damagePlayer(e.dmg * 1.35, e, { unblockable: true });
-        }
-        break;
-      }
-      case 'chargeWind': {
-        turnTo(toPlayer, 6);
-        e.glow = Math.min(1, e.t / 0.6);
-        if (e.t >= 0.6) {
-          e.state = 'charge'; e.t = 0; e.struck = false;
-          e.chargeDir.set(Math.sin(e.facing), 0, Math.cos(e.facing));
-          banner('', 'The Demon King charges!', 0.8);
-        }
-        break;
-      }
-      case 'charge': {
-        e.glow = 0.6;
-        mvx = e.chargeDir.x; mvz = e.chargeDir.z; moveSpeed = 22;
-        if (!e.struck && dist < d.radius + 1.4) { e.struck = true; damagePlayer(e.dmg, e, { unblockable: true }); }
-        if (Math.random() < 0.5) burst(e.pos.x, height(e.pos.x, e.pos.z) + 0.3, e.pos.z, 2, 0x8a6a4a, 2, 1, 0.5, 3);
-        if (e.t >= 0.75 || arenaDist(e.pos.x, e.pos.z) > ARENA.r + 6) { e.state = 'recover'; e.t = 0; }
+        if (!playerSafe && dist < d.aggro * 0.6 && !(e.faction !== undefined && !hostileTo(e.faction))) e.state = 'chase';
         break;
       }
     }
@@ -1685,35 +1795,7 @@ function updateEnemies(dt, playerSafe) {
     e.moveFrac = lerp(e.moveFrac, moveSpeed / d.speed, 0.2);
     animateWalk(e.rig, dt, Math.min(1.6, e.moveFrac));
 
-    const arm = e.rig.armR;
-    if (e.state === 'windup' || e.state === 'chargeWind') {
-      const k = smooth(0, wind * 0.7, e.t);
-      arm.rotation.set(lerp(REST_ARM, -2.9, k), 0, 0);
-      wrist(e.rig, lerp(e.rig.wristRest, -0.6, k), 0.5);
-      e.rig.body.rotation.x = lerp(0, -0.15, k);
-    } else if (e.state === 'throw') {
-      arm.rotation.set(lerp(REST_ARM, -2.6, Math.min(1, e.t / 0.25)), 0.5, 0);
-    } else if (e.state === 'strike') {
-      const k = smooth(0, 0.1, e.t);
-      arm.rotation.set(lerp(-2.9, -0.4, k), 0, 0);
-      e.rig.weapon.rotation.x = lerp(-0.6, -0.25, k);
-      e.rig.body.rotation.x = lerp(-0.15, 0.25, k);
-    } else if (e.state === 'slamWind') {
-      const k = smooth(0, 0.5, e.t);
-      arm.rotation.set(lerp(REST_ARM, -3.0, k), 0, 0);
-      wrist(e.rig, -0.5, 0.3);
-      e.rig.armL.rotation.x = lerp(0, -3.0, k);
-      e.rig.body.rotation.x = -0.2 * k;
-    } else if (e.state === 'hurt') {
-      e.rig.body.rotation.x = lerp(e.rig.body.rotation.x, -0.4 * (e.hitFront ?? 1), 0.35);
-      e.rig.body.rotation.z = lerp(e.rig.body.rotation.z, 0.3 * (e.hitSide ?? 0), 0.35);
-    } else if (e.state === 'charge') {
-      e.rig.body.rotation.x = 0.35;
-      arm.rotation.set(-1.2, 0, 0);
-      wrist(e.rig, -0.3, 0.3);
-    } else {
-      restArm(e.rig, 0.12);
-    }
+    poseEnemy(e);
     setEmissive(e);
 
     if (e.bar) {
@@ -3856,6 +3938,8 @@ function startGame(s) {
 }
 
 // ============================================================ Boot
+// Enemy content is checked once at load; problems are reported, not silently patched.
+for (const err of validateContent(ENEMIES)) console.error('Enemy content:', err);
 spawnWorldEnemies();
 rebuildPlayerRig();
 placeAtTown(0);
@@ -3864,7 +3948,7 @@ window.__game = {
   renderer, P, enemies, TOWNS, interactables, NINJA_BASES, DEMON_BASES, projectiles,
   get boss() { return boss; }, get ui() { return ui; }, get gfxHigh() { return gfxHigh; },
   setCam(yaw, pitch, dist) { camYaw = yaw; camPitch = pitch; camDist = dist; },
-  unsheath, startNewLife, finishTask, get echo() { return echo; }, nwSite, ELEMENTS, rooms, companions,
+  unsheath, startNewLife, finishTask, moveLog, attackTurns, get echo() { return echo; }, nwSite, ELEMENTS, rooms, companions,
 };
 
 const clock = new THREE.Clock();
