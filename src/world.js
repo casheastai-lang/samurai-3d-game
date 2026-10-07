@@ -1541,6 +1541,7 @@ function buildHomeAndDojo(t, at, keepClear) {
   addCollider(mx, mz, 2.6);
   keepClear.push([mx, mz, 5]);
   buildAcademy(t, at, keepClear);
+  nwSite.academy[t.element].monument = { x: mx, z: mz };
 }
 
 // The village academy: an open training yard between the two ring streets where

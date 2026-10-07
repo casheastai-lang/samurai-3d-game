@@ -305,6 +305,7 @@ function hostileTo(k) {
   if (!L || k === L.village || L.age < RIVAL_AGE || L.rel[k] >= 0) return false;
   // Messengers carrying letters pass safely.
   if (L.task?.type === 'deliver' && TOWNS[L.task.target].element === k) return false;
+  if (L.lesson?.type === 'deliver' && TOWNS[L.lesson.target].element === k) return false;
   return true;
 }
 const relName = k => (k === P.life?.village ? 'Home' : relOf(k) >= 60 ? 'Ally' : relOf(k) >= 0 ? 'At peace' : 'Rival');
@@ -315,7 +316,7 @@ const growth = () => (P.life ? clamp((P.life.age - 6) / 10, 0, 1) : 1);
 const ageScale = () => 0.58 + 0.42 * growth();
 const hasCharm = c => P.charms.includes(c);
 const W = () => WEAPONS[P.weapon];
-const maxHp = () => 100 + (P.lvl - 1) * 12 + (hasCharm('vitality') ? 50 : 0) + (P.life?.badges?.length ?? 0) * 5;
+const maxHp = () => 100 + (P.lvl - 1) * 12 + (hasCharm('vitality') ? 50 : 0) + (P.life?.badges?.length ?? 0) * 3;
 const maxSt = () => 100 + (hasCharm('stamina') ? 40 : 0);
 const isArcher = () => P.style === 'archer';
 const B = () => BOWS[P.bow];
@@ -1922,7 +1923,7 @@ modalBox.addEventListener('click', e => {
     case 'sleep': sleepAtHome(); break;
     case 'inside': goInsideHome(); break;
     case 'mission': startMission(Number(arg)); break;
-    case 'lesson': startLesson(); break;
+    case 'lesson': startLesson(arg); break;
     case 'quitLesson': endLesson(false); closeModal(); break;
     case 'smission': startSquadMission(arg); break;
     case 'quitSquad': endSquadMission(false); closeModal(); break;
@@ -2216,6 +2217,12 @@ function travel(i) {
 }
 function openElder(town) {
   const L = P.life, task = L?.task;
+  if (L?.lesson?.type === 'deliver' && L.lesson.target === town.index) {
+    openModal(`<h2>${town.elderTitle}</h2><p>&ldquo;A letter from ${ACADEMY_MASTER[L.village]}? You walked all this way alone? Well done, little one.&rdquo;</p>
+      <div class="btns"><button data-act="close">Bow</button></div>`, 'dialog');
+    lessonCount('deliver', 1);
+    return;
+  }
   if (task?.type === 'deliver' && task.target === town.index) {
     openModal(`<h2>${town.elderTitle}</h2><p>&ldquo;A letter from ${ELEMENTS[L.village].village}? You came all this way alone? Here, take something for the road.&rdquo;</p>
       <div class="btns"><button data-act="close">Bow</button></div>`, 'dialog');
@@ -2419,8 +2426,8 @@ const pickupMat = new Map();
 function nextTask() {
   const L = P.life, el = ELEMENTS[L.village];
   let task;
-  if (L.age < 16) task = { ...LIFE_PLAN[L.age - 6] };
-  else if (!L.adult) task = { type: 'ceremony' };
+  if (L.age < 16) { L.task = null; updateQuest(); return; }
+  if (!L.adult) task = { type: 'ceremony' };
   else if (!L.echoDead) task = { type: 'echo' };
   else {
     // Grown-up life: odd jobs for the villages, for gold.
@@ -2456,7 +2463,8 @@ function updateQuest() {
   const lines = [];
   if (L) {
     if (L.task) lines.push([taskTitle(L.task), taskText(L.task), null]);
-    if (L.lesson) { const d = LESSONS.find(x => x.key === L.lesson.key); lines.push(['Academy &middot; ' + d.name, d.text(L.lesson), '#ffe080']); }
+    if (L.lesson && lessonDef(L.lesson.id)) lines.push(['Academy &middot; ' + lessonDef(L.lesson.id).name, lessonText(L.lesson), '#ffe080']);
+    else if (!L.graduated) lines.push([`Academy &middot; Year ${schoolYear() + 1}`, `Talk to ${ACADEMY_MASTER[L.village]} in the academy yard for your next mission`, '#ffe080']);
     if (L.smission) lines.push([`${L.smission.rank}-rank &middot; ${L.smission.name}`, squadMissionText(L.smission), '#ffd860']);
     if (L.mission) lines.push(['Mission &middot; ' + ELEMENTS[L.mission.v].village, MISSION_TEXT[L.mission.type](L.mission, ELEMENTS[L.mission.v]), ELEMENTS[L.mission.v].css]);
   }
@@ -2494,6 +2502,14 @@ function updatePickups(dt) {
     const m = pickups[i];
     m.rotation.y += dt * 2;
     m.position.y = height(m.position.x, m.position.z) + 0.8 + Math.sin(time * 3 + i) * 0.15;
+    const les = P.life?.lesson;
+    if (Math.hypot(m.position.x - P.pos.x, m.position.z - P.pos.z) < 1.5 && les?.type === 'gather') {
+      burst(m.position.x, m.position.y, m.position.z, 18, ELEMENTS[P.life.village].color, 2, 3, 0.7, 1);
+      scene.remove(m);
+      pickups.splice(i, 1);
+      lessonCount('gather');
+      continue;
+    }
     if (Math.hypot(m.position.x - P.pos.x, m.position.z - P.pos.z) < 1.5 && task?.type === 'gather') {
       burst(m.position.x, m.position.y, m.position.z, 18, ELEMENTS[P.life.village].color, 2, 3, 0.7, 1);
       scene.remove(m);
@@ -2522,7 +2538,8 @@ function trainHit(reach, fx, fz) {
 }
 function lifeKill(e) {
   squadKill(e);
-  if (e.type.startsWith('imp_')) lessonCount('exam');
+  if (e.type.startsWith('imp_')) lessonCount('imps');
+  if (e.type.startsWith('beast_')) lessonCount('oni');
   if (e.spar) lessonCount('spar');
   const m = P.life?.mission;
   if (m?.type === 'clear' && e.type === 'beast_' + ELEMENTS[m.v].key) { m.have++; updateQuest(); if (m.have >= m.n) missionDone(); }
@@ -2695,7 +2712,7 @@ function useArt() {
     }
   }
   floatText(new THREE.Vector3(P.pos.x, P.y + 3.2, P.pos.z), art.name, 'crit', 1.1);
-  P.artCd = P.life.lesson?.key === 'art' ? 1.5 : art.cd;
+  P.artCd = P.life.lesson?.type === 'art' ? 1.5 : art.cd;
   const ac = academyHere();
   if (ac && Math.hypot(P.pos.x - ac.x, P.pos.z - ac.z) < 14) lessonCount('art');
 }
@@ -2773,7 +2790,9 @@ function syncRelations() {
   if (!L.badges) L.badges = [];
   if (L.lesson === undefined) L.lesson = null;
   if (L.smission === undefined) L.smission = null;
-  if (L.lesson) { L.lesson = null; }
+  if (L.lesson && !lessonDef(L.lesson.id)) L.lesson = null;
+  if (L.age < 16 && L.task && L.task.type !== 'ceremony') L.task = null;
+  setupLesson();
   if (L.squadFollow === undefined) L.squadFollow = true;
   setupSquadMission();
   if (L.mission?.type === 'duel') ensureChampion(L.mission.v);
@@ -2902,28 +2921,49 @@ function updateCompanion(dt) {
 // given a real sword and assigned to a squad that takes ranked missions.
 const ACADEMY_MASTER = ['Master Oboro', 'Master Kagari', 'Master Kohaku', 'Master Hyou', 'Master Nagisa'];
 const SQUAD_MATES = [['Kage-no-Rin', 'Tobi'], ['Hinata', 'Rokuro'], ['Kinta', 'Sayo'], ['Yukiko', 'Tetsu'], ['Mio', 'Kaito']];
-const LESSONS = [
-  { key: 'footwork', name: 'Footwork', n: 6, time: 60, text: (l) => `Run through the glowing rings in order (${l.have}/6) &middot; ${Math.ceil(l.t)}s` },
-  { key: 'strikes', name: 'First Cuts', n: 10, text: (l) => `Strike the academy dummies (${l.have}/10)` },
-  { key: 'targets', name: 'Target Practice', n: 4, text: (l) => `Hit each straw target around the yard (${l.have}/4)` },
-  { key: 'guard', name: 'Guard Up', n: 5, text: (l) => `Hold Q and block your sparring partner's blows (${l.have}/5)` },
-  { key: 'parry', name: 'The Parry', n: 2, text: (l) => `Tap Q just as a blow lands to parry it (${l.have}/2)` },
-  { key: 'roll', name: 'Rolling Escape', n: 4, text: (l) => `Roll (F) through your partner's attacks (${l.have}/4)` },
-  { key: 'art', name: 'Village Art', n: 2, minAge: 8, text: (l) => `Use your village art (V) in the yard (${l.have}/2)` },
-  { key: 'spar', name: 'Sparring Match', n: 1, text: () => 'Win a sparring match against your classmate' },
-  { key: 'race', name: 'Gate Run', n: 2, time: 75, text: (l) => (l.have ? 'Now run back to the master!' : 'Run to the far village gate') + ` &middot; ${Math.ceil(l.t)}s` },
-  { key: 'exam', name: 'Final Exam', n: 3, text: (l) => `Drive off spirit imps in the wilds (${l.have}/3)` },
+// The curriculum: ten school years from age 6 to 15, three missions each. Finishing a
+// year's missions is a birthday; finishing year ten (at 16) is graduation.
+const T = {
+  rings: (l, d) => `Run through the glowing rings in order (${l.have}/${d.n}) &middot; ${Math.ceil(l.t)}s`,
+  strikes: (l, d) => `Strike the academy dummies (${l.have}/${d.n})`,
+  targets: (l, d) => `Hit each straw target around the yard (${l.have}/${d.n})`,
+  guard: (l, d) => `Hold Q and block your sparring partner's blows (${l.have}/${d.n})`,
+  parry: (l, d) => `Tap Q just as a blow lands to parry it (${l.have}/${d.n})`,
+  roll: (l, d) => `Roll (F) through your partner's attacks (${l.have}/${d.n})`,
+  art: (l, d) => `Use your village art (V) in the academy yard (${l.have}/${d.n})`,
+  spar: () => 'Win a sparring match against your classmate',
+  race: (l) => (l.have ? 'Now run back to the master!' : 'Run to the far village gate') + ` &middot; ${Math.ceil(l.t)}s`,
+  imps: (l, d) => `Drive off spirit imps in the wilds (${l.have}/${d.n})`,
+  oni: (l, d) => `Hunt wild oni far out in the wilds (${l.have}/${d.n})`,
+  water: (l) => (l.have ? 'Carry the bucket to the academy master' : 'Draw water from the village well'),
+  gather: (l, d) => `Collect ${ELEMENTS[P.life.village].item} around the village (${l.have}/${d.n})`,
+  jump: (l, d) => `Jump (Space) in the academy yard (${l.have}/${d.n})`,
+  meditate: (l, d) => `Stand still by the ${ELEMENTS[P.life.village].name} monument and breathe (${Math.floor(l.have)}/${d.n}s)`,
+  deliver: (l) => `Carry the master's letter to the elder of ${TOWNS[l.target].name}`,
+};
+const CURRICULUM = [
+  [{ id: 'y1a', type: 'rings', name: 'Footwork', n: 6, time: 70 }, { id: 'y1b', type: 'strikes', name: 'First Cuts', n: 6 }, { id: 'y1c', type: 'water', name: 'Water for the Academy', n: 2 }],
+  [{ id: 'y2a', type: 'targets', name: 'Target Practice', n: 4 }, { id: 'y2b', type: 'gather', name: 'Herb Gathering', n: 5 }, { id: 'y2c', type: 'jump', name: 'Leaping Crane', n: 5 }],
+  [{ id: 'y3a', type: 'art', name: 'Your Village Art', n: 2 }, { id: 'y3b', type: 'guard', name: 'Guard Up', n: 4 }, { id: 'y3c', type: 'strikes', name: 'A Hundred Cuts', n: 12 }],
+  [{ id: 'y4a', type: 'deliver', name: 'The First Letter', hop: 1, n: 1 }, { id: 'y4b', type: 'meditate', name: 'Still Water', n: 12 }, { id: 'y4c', type: 'rings', name: 'Swift Feet', n: 6, time: 50 }],
+  [{ id: 'y5a', type: 'parry', name: 'The Parry', n: 2 }, { id: 'y5b', type: 'roll', name: 'Rolling Escape', n: 4 }, { id: 'y5c', type: 'imps', name: 'Imp Patrol', n: 2 }],
+  [{ id: 'y6a', type: 'spar', name: 'Sparring Match', n: 1 }, { id: 'y6b', type: 'gather', name: 'Deep Gathering', n: 7 }, { id: 'y6c', type: 'race', name: 'Gate Run', n: 2, time: 80 }],
+  [{ id: 'y7a', type: 'imps', name: 'Clearing the Paths', n: 4 }, { id: 'y7b', type: 'deliver', name: 'The Far Letter', hop: 2, n: 1 }, { id: 'y7c', type: 'targets', name: 'Eagle Eye', n: 4 }],
+  [{ id: 'y8a', type: 'guard', name: 'Iron Guard', n: 8 }, { id: 'y8b', type: 'parry', name: 'Turning Steel', n: 4 }, { id: 'y8c', type: 'art', name: 'Mastering the Art', n: 4 }],
+  [{ id: 'y9a', type: 'spar', name: 'The Rematch', n: 1, tough: true }, { id: 'y9b', type: 'oni', name: 'First Oni Hunt', n: 1 }, { id: 'y9c', type: 'race', name: 'Wind Runner', n: 2, time: 65 }],
+  [{ id: 'y10a', type: 'imps', name: 'Final Exam: The Wilds', n: 5 }, { id: 'y10b', type: 'oni', name: 'Final Exam: The Oni', n: 2 }, { id: 'y10c', type: 'meditate', name: 'Final Exam: Clear Mind', n: 20 }],
 ];
+const ALL_LESSONS = CURRICULUM.flat();
+const lessonDef = id => ALL_LESSONS.find(d => d.id === id);
+const lessonText = l => T[lessonDef(l.id).type](l, lessonDef(l.id));
 const ringMeshes = [];
 let sparPartner = null;
 function academyHere() {
   const L = P.life;
   return L ? nwSite.academy[L.village] : null;
 }
-function nextLesson() {
-  const L = P.life;
-  return LESSONS.find(l => !L.badges.includes(l.key) && (!l.minAge || L.age >= l.minAge)) ?? null;
-}
+// The school year a child is in: their age, capped at year ten.
+const schoolYear = () => clamp(P.life.age - 6, 0, 9);
 function openAcademy(town) {
   const L = P.life, el = ELEMENTS[town.element], master = ACADEMY_MASTER[town.element];
   if (!L || L.village !== town.element) {
@@ -2931,54 +2971,73 @@ function openAcademy(town) {
     return;
   }
   if (L.graduated) { openMissionDesk(); return; }
-  const badges = LESSONS.map(l => `<div class="lesson ${L.badges.includes(l.key) ? 'done' : ''}">${L.badges.includes(l.key) ? '&#10004;' : '&#9675;'} ${l.name}${l.minAge && L.age < l.minAge ? ` <span>(age ${l.minAge})</span>` : ''}</div>`).join('');
-  const nl = nextLesson();
-  const active = L.lesson;
+  const y = schoolYear(), year = CURRICULUM[y], active = L.lesson;
+  const rows = year.map(d => {
+    const done = L.badges.includes(d.id);
+    const btn = done ? '<div class="price">Passed</div>' : active ? '' : `<button data-act="lesson|${d.id}">Begin</button>`;
+    return `<div class="item ${done ? 'passed' : ''}"><div class="rank rank-D">${done ? '&#10004;' : y + 1}</div><div class="meta"><div class="name">${d.name}</div><div class="desc">${T[d.type]({ have: 0, t: d.time ?? 0, target: d.hop ? ELEMENTS[(L.village + d.hop) % 5].town.index : 0 }, d).replace(/ &middot;.*$/, '').replace(/\(0\/\d+s?\)/, '')}</div></div>${btn}</div>`;
+  }).join('');
+  const total = L.badges.filter(id => lessonDef(id)).length;
   openModal(`<h2>${master} &middot; ${el.village} Academy</h2>
-    <p>&ldquo;${L.badges.length === 0 ? 'Welcome, little one! Every samurai of ' + el.village + ' starts here. Pass all ten lessons, and you will graduate with a real sword and a squad of your own.' : 'Back again? Good. Discipline is a habit.'}&rdquo;</p>
-    <div class="lessons">${badges}</div>
-    <p class="sub">Each lesson passed: +5 max health. ${L.badges.length}/10 passed.</p>
-    <div class="btns">${active ? `<button class="secondary" data-act="quitLesson">Give up: ${LESSONS.find(l => l.key === active.key).name}</button>`
-      : nl ? `<button data-act="lesson">Begin: ${nl.name}</button>` : '<span class="sub">Grow a little older for the next lesson.</span>'}
-      <button class="secondary" data-act="close">Bow (E)</button></div>`, 'dialog');
+    <p>&ldquo;${total === 0 ? 'Welcome, little one! Every samurai of ' + el.village + ' grows up here. Finish each year\'s three missions, and you grow a year older. Finish all ten years, and you graduate with a real sword and a squad of your own.' : 'Year ' + (y + 1) + '. Discipline is a habit, little one.'}&rdquo;</p>
+    <p class="sub">Year ${y + 1} of 10 &middot; ${total}/${ALL_LESSONS.length} academy missions passed &middot; each one: +3 max health</p>
+    <div class="items">${rows}</div>
+    <div class="btns">${active ? `<button class="secondary" data-act="quitLesson">Give up: ${lessonDef(active.id).name}</button>` : ''}<button class="secondary" data-act="close">Bow (E)</button></div>`, 'dialog');
 }
-function startLesson() {
-  const L = P.life, def = nextLesson(), ac = academyHere();
-  if (!def) return;
-  L.lesson = { key: def.key, have: 0, t: def.time ?? 0, hit: [] };
+function startLesson(id) {
+  const L = P.life, def = lessonDef(id);
+  if (!def || L.lesson) return;
+  L.lesson = { id, type: def.type, have: 0, t: def.time ?? 0, hit: [] };
+  if (def.type === 'deliver') L.lesson.target = ELEMENTS[(L.village + def.hop) % 5].town.index;
   closeModal();
-  if (def.key === 'footwork') showRings();
-  if (['guard', 'parry', 'roll', 'spar'].includes(def.key)) ensureSpar(def.key === 'spar');
-  banner('Lesson: ' + def.name, def.text(L.lesson).replace(/&middot;.*$/, ''), 3);
+  setupLesson();
+  banner('Academy: ' + def.name, lessonText(L.lesson).replace(/ &middot;.*$/, ''), 3);
   updateQuest();
+  save();
+}
+// Spawn whatever the active lesson needs (also after loading a save).
+function setupLesson() {
+  const l = P.life?.lesson;
+  clearRings();
+  if (!l) return;
+  if (l.type === 'rings') showRings();
+  if (['guard', 'parry', 'roll', 'spar'].includes(l.type)) ensureSpar(l.type === 'spar', lessonDef(l.id).tough);
+  if (l.type === 'gather') spawnPickups(lessonDef(l.id).n + 2);
 }
 function endLesson(passed) {
   const L = P.life, l = L.lesson;
   if (!l) return;
   L.lesson = null;
   clearRings();
+  if (l.type === 'gather') clearPickups();
   if (sparPartner?.alive) markDead(sparPartner);
-  if (!passed) { banner('Lesson stopped', 'Try again anytime.', 1.8); updateQuest(); return; }
-  const def = LESSONS.find(d => d.key === l.key);
-  L.badges.push(def.key);
-  gainXP(30);
+  if (!passed) { banner('Mission stopped', 'Try again anytime at the academy.', 1.8); updateQuest(); save(); return; }
+  const def = lessonDef(l.id);
+  L.badges.push(def.id);
+  gainXP(20 + schoolYear() * 8);
+  P.gold += 5 + schoolYear() * 3;
   P.hp = maxHp();
-  floatText(headPos(), '+5 max HP', 'heal', 1.4);
+  floatText(headPos(), '+3 max HP', 'heal', 1.4);
   burst(P.pos.x, P.y + 1.2, P.pos.z, 40, ELEMENTS[L.village].color, 3, 4, 1, 1);
-  if (L.badges.length >= LESSONS.length) graduate();
-  else banner('Lesson passed: ' + def.name, `${L.badges.length}/10 lessons. Talk to ${ACADEMY_MASTER[L.village]} for the next one.`, 3);
+  const year = CURRICULUM[schoolYear()];
+  if (year.every(d => L.badges.includes(d.id))) {
+    // A school year finished: a year older.
+    if (schoolYear() === 9) { ageUp('You passed every year of the Academy!'); setTimeout(graduate, 3400); }
+    else ageUp(`Year ${schoolYear() + 1} of the Academy complete!`);
+  } else banner('Passed: ' + def.name, `${year.filter(d => L.badges.includes(d.id)).length}/3 missions this year`, 2.6);
   updateQuest();
   save();
 }
-function lessonCount(key, by = 1) {
+function lessonCount(type, by = 1) {
   const l = P.life?.lesson;
-  if (!l || l.key !== key) return;
+  if (!l || l.type !== type) return;
+  const def = lessonDef(l.id);
   l.have += by;
-  floatText(headPos(), `${l.have}/${LESSONS.find(d => d.key === key).n}`, 'xp', 0.8);
+  if (type !== 'meditate') floatText(headPos(), `${l.have}/${def.n}`, 'xp', 0.8);
   updateQuest();
-  if (l.have >= LESSONS.find(d => d.key === key).n) endLesson(true);
+  if (l.have >= def.n) endLesson(true);
 }
-function ensureSpar(forReal) {
+function ensureSpar(forReal, tough) {
   const ac = academyHere();
   if (!sparPartner) {
     sparPartner = createEnemy('student', ac.x, ac.z + 2, { role: 'spar', title: 'Classmate' });
@@ -2987,6 +3046,8 @@ function ensureSpar(forReal) {
     sparPartner.home.set(ac.x, 0, ac.z + 2);
     respawnEnemy(sparPartner);
   }
+  sparPartner.maxHp = sparPartner.hp = tough ? 260 : 110;
+  sparPartner.dmg = tough ? 8 : 4;
   sparPartner.talked = true;
   sparPartner.realMatch = forReal;
   sparPartner.state = 'chase';
@@ -3006,43 +3067,63 @@ function clearRings() {
   for (const m of ringMeshes) scene.remove(m);
   ringMeshes.length = 0;
 }
+let wasGrounded = true;
 function updateAcademy(dt) {
   const L = P.life, l = L?.lesson;
   if (!l) return;
-  const def = LESSONS.find(d => d.key === l.key), ac = academyHere();
+  const def = lessonDef(l.id), ac = academyHere();
+  if (!def) { L.lesson = null; return; }
   if (def.time) {
     l.t -= dt;
-    if (l.t <= 0) { banner('Too slow!', 'The lesson starts over. Talk to the master to try again.', 2.5); endLesson(false); return; }
-    if (Math.floor(l.t * 4) !== Math.floor((l.t + dt) * 4)) updateQuest();
+    if (l.t <= 0) { banner('Too slow!', 'Talk to the master to try again.', 2.5); endLesson(false); return; }
+    if (Math.floor(l.t) !== Math.floor(l.t + dt)) updateQuest();
   }
-  if (l.key === 'footwork') {
+  const inYard = Math.hypot(P.pos.x - ac.x, P.pos.z - ac.z) < 9;
+  if (l.type === 'rings') {
     ringMeshes.forEach((m, i) => { m.rotation.y += dt * 2; m.visible = i >= l.have; m.material.emissiveIntensity = i === l.have ? 2.4 : 0.4; });
     const r = ac.rings[l.have];
-    if (r && Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < 1.8) { burst(r.x, P.y + 1.4, r.z, 20, 0xffe080, 3, 3, 0.6, 0); lessonCount('footwork'); }
-  } else if (l.key === 'race') {
+    if (r && Math.hypot(P.pos.x - r.x, P.pos.z - r.z) < 2) { burst(r.x, P.y + 1.4, r.z, 20, 0xffe080, 3, 3, 0.6, 0); lessonCount('rings'); }
+  } else if (l.type === 'race') {
     const goal = l.have === 0 ? ac.gate : ac.master;
     if (Math.hypot(P.pos.x - goal.x, P.pos.z - goal.z) < 4) { lessonCount('race'); if (P.life.lesson) banner('Halfway!', 'Now back to the master', 1.5); }
-  } else if (sparPartner && sparPartner.alive && ['guard', 'parry', 'roll', 'spar'].includes(l.key)) {
+  } else if (l.type === 'jump') {
+    if (inYard && wasGrounded && !P.grounded) lessonCount('jump');
+  } else if (l.type === 'meditate') {
+    const mo = ac.monument;
+    const still = Math.hypot(P.pos.x - mo.x, P.pos.z - mo.z) < 6 && inputDir().len === 0 && P.state === 'idle';
+    if (still) {
+      const before = Math.floor(l.have);
+      l.have += dt;
+      if (Math.floor(l.have) !== before) { updateQuest(); if (Math.random() < 0.5) burst(P.pos.x, P.y + 1.6, P.pos.z, 6, ELEMENTS[L.village].color, 1, 1, 1, 1); }
+      if (l.have >= def.n) endLesson(true);
+    }
+  } else if (l.type === 'water') {
+    if (l.have === 1 && Math.hypot(P.pos.x - ac.master.x, P.pos.z - ac.master.z) < 4) { lessonCount('water'); banner('Thank you!', 'The master drinks deeply.', 1.6); }
+  } else if (sparPartner && sparPartner.alive && ['guard', 'parry', 'roll', 'spar'].includes(l.type)) {
     // Keep the classmate in the yard and focused on you.
     if (sparPartner.state === 'idle' || sparPartner.state === 'return') { sparPartner.state = 'chase'; sparPartner.t = 0; }
   }
+  wasGrounded = P.grounded;
 }
 function trainHitAcademy(reach, fx, fz) {
   const l = P.life?.lesson, ac = academyHere();
   if (!l || !ac) return;
-  const list = l.key === 'strikes' ? ac.dummies : l.key === 'targets' ? ac.targets : null;
+  const list = l.type === 'strikes' ? ac.dummies : l.type === 'targets' ? ac.targets : null;
   if (!list) return;
-  list.forEach((d, i) => {
+  for (let i = 0; i < list.length; i++) {
+    const d = list[i];
     const dx = d.x - P.pos.x, dz = d.z - P.pos.z, dist = Math.hypot(dx, dz);
-    if (dist > reach || (dx * fx + dz * fz) / (dist || 1) < 0.2) return;
-    if (l.key === 'targets') { if (l.hit.includes(i)) return; l.hit.push(i); }
+    if (dist > reach || (dx * fx + dz * fz) / (dist || 1) < 0.2) continue;
+    if (l.type === 'targets') { if (l.hit.includes(i)) continue; l.hit.push(i); }
     spawnImpact(d.x, height(d.x, d.z) + 1.4, d.z, { color: 0xffe0a0, size: 1 });
-    lessonCount(l.key);
-  });
+    lessonCount(l.type);
+    if (l.type === 'strikes') return;
+  }
 }
 function graduate() {
   const L = P.life, el = ELEMENTS[L.village];
   L.graduated = true;
+  if (!L.task && L.age >= 16 && !L.adult) setTimeout(nextTask, 600);
   L.squad = { name: 'Squad ' + (3 + L.village * 2), mates: SQUAD_MATES[L.village], done: 0, rankDone: { D: 0, C: 0, B: 0, A: 0, S: 0 } };
   L.squadFollow = true;
   if (!P.ownedWeapons.includes('steel')) P.ownedWeapons.push('steel');
@@ -3336,6 +3417,14 @@ function openSensei(town) {
     <div class="btns"><button class="secondary" data-act="close">Bow (E)</button></div>`, 'dialog');
 }
 function drawWater() {
+  const l = P.life?.lesson;
+  if (l?.type === 'water' && l.have === 0) {
+    l.have = 1;
+    burst(P.pos.x, P.y + 1, P.pos.z, 20, 0x8ad0ff, 2, 3, 0.7, 1);
+    banner('Bucket filled', 'Carry it to the academy master', 2);
+    updateQuest();
+    return;
+  }
   const task = P.life?.task;
   if (task?.type === 'water' && task.stage === 0) {
     task.stage = 1;

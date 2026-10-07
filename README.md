@@ -73,14 +73,17 @@ Five villages live there, very far apart, around a great sacred tree at the Cros
 | Koorimura | Ice | Take 15% less damage | Hyoga (frost) |
 | Mizumura | Water | Health slowly heals on its own | Suigetsu (leech) |
 
-You grow up one year for each life task you finish. The tracker under the minimap shows your age and current task:
-- fetch water from the well for your family;
-- gather herbs and treasures around the village;
-- train on the dojo's straw dummies;
-- carry letters to the other villages;
-- drive off spirit imps, and later wild oni.
+You grow up at the **Academy**: ten school years from age 6 to 15, with three academy missions each, 30 in all.
+Finish a year's three missions and you have a birthday, growing a little taller. The tracker under the minimap shows your age and your current mission.
+Missions include:
+- running the glowing ring course and the gate run;
+- striking dummies, hitting targets and jump practice;
+- blocking, parrying and rolling against a classmate, and sparring matches;
+- using your village art and meditating at the village monument;
+- fetching water, gathering herbs and carrying letters to other villages;
+- hunting imps and oni.
 
-You start with an oak bokken. You get a steel katana at 12, and you grow a little taller every birthday.
+Year ten is the final exam; pass it and you graduate at 16.
 
 At 16 the elder holds your coming-of-age ceremony and gives you the village's heirloom blade. Then the **Echo of Shuten-doji** wakes beneath the sacred tree, and you finish what you started.
 After that your life goes on: take jobs for gold and grow old in your village. Your hair turns gray at 45.
@@ -104,8 +107,7 @@ Each village teaches its own power. Your sensei teaches it to you at age 8; pres
 
 ### The Academy, your squad and ranked missions
 
-Every village has an **Academy**: an open training yard with dummies, straw targets and a weapon rack, run by its own master.
-Children take ten lessons there: Footwork (glowing rings), First Cuts, Target Practice, Guard Up, The Parry, Rolling Escape, Village Art, a Sparring Match, the Gate Run and the Final Exam. Each lesson passed raises your max health by 5.
+Every village has an **Academy**: an open training yard with dummies, straw targets and a weapon rack, run by its own master. Each academy mission passed raises your max health by 3.
 
 **You get no real sword until you graduate.** Until then you train with an oak bokken, and shops won't sell you weapons.
 Graduating gives you a steel katana and assigns you to a **squad**: two classmates who travel and fight beside you and grow up with you.
