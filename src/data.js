@@ -192,8 +192,10 @@ TOWNS.forEach((t, i) => {
 // of five villages, one for each element, where they are reborn as a child.
 export const NEW_X = -1000;
 // House interiors are rooms built far off to the west, past the new world.
-export const INTERIOR_X = -3600;
-export const NW = { x: -2250, z: -600, r: 900, ring: 600 };
+export const INTERIOR_X = -8000;
+// The villages stand 1.6 km from the sacred tree: neighbors are about 1.9 km apart and
+// villages across the island about 3 km apart.
+export const NW = { x: -3400, z: -600, r: 2200, ring: 1600 };
 export const ELEMENTS = [
   {
     key: 'shadow', name: 'Shadow', village: 'Kagemura', kanji: '影', color: 0x9a6ae0, css: '#b48cff',

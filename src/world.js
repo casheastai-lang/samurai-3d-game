@@ -1220,7 +1220,7 @@ function buildGrass() {
   // New-world grass, tinted by each element's lands: violet, rust, gold, sea-green.
   const nwMats = [], nwSec = [];
   const nwTrails = TRAILS.filter(([ax]) => ax < NEW_X);
-  for (let i = 0; i < 1100000 && nwMats.length < 210000; i++) {
+  for (let i = 0; i < 1800000 && nwMats.length < 300000; i++) {
     let x, z, r;
     if (i % 3) {
       // Most grass grows along the paths and around the villages, where you walk.
@@ -1687,7 +1687,7 @@ function roomAt(x, z) {
 function buildNewWorld() {
   const W = [0, 0, 0, 0, 0];
   // ---- Terrain disc, colored by element.
-  const size = NW.r * 2 + 60, seg = Math.round(size / 6);
+  const size = NW.r * 2 + 60, seg = Math.round(size / 11);
   const geo = new THREE.PlaneGeometry(size, size, seg, seg).rotateX(-Math.PI / 2).translate(NW.x, 0, NW.z);
   const pos = geo.attributes.position, colors = new Float32Array(pos.count * 3);
   const c = new THREE.Color(), tmp = new THREE.Color(), tmp2 = new THREE.Color();

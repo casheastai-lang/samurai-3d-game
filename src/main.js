@@ -1390,7 +1390,7 @@ function spawnWorldEnemies() {
       for (let k = 0; k < 2; k++) createEnemy('imp_' + el.key, x + wr(-3, 3), z + wr(-3, 3));
       g++;
     }
-    for (let g = 0, tries = 0; g < 10 && tries < 400; tries++) {
+    for (let g = 0, tries = 0; g < 24 && tries < 800; tries++) {
       const a = el.angle + wr(-0.6, 0.6), r = wr(160, NW.r - 60);
       const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
       if (townDist(x, z) < 60) continue;
@@ -1398,6 +1398,23 @@ function spawnWorldEnemies() {
       g++;
     }
   }
+  // The long roads between villages: an imp gang or a wild oni every few hundred meters.
+  NW_TOWNS.forEach((t, k) => {
+    for (const hop of [0, 1, 2]) {
+      const [bx, bz] = hop === 0 ? [NW.x, NW.z] : [NW_TOWNS[(k + hop) % 5].x, NW_TOWNS[(k + hop) % 5].z];
+      const len = Math.hypot(bx - t.x, bz - t.z), steps = Math.floor(len / 260);
+      for (let s = 1; s < steps; s++) {
+        const u = s / steps;
+        let x = lerp(t.x, bx, u), z = lerp(t.z, bz, u);
+        const side = (s % 2 ? 1 : -1) * wr(14, 30), nx = -(bz - t.z) / len, nz = (bx - t.x) / len;
+        x += nx * side; z += nz * side;
+        if (townDist(x, z) < 40 || Math.hypot(x - NW.x, z - NW.z) < 60) continue;
+        const el = ELEMENTS[nwSector(x, z)];
+        if (s % 3 === 0) createEnemy('beast_' + el.key, x, z);
+        else for (let j = 0; j < 2; j++) createEnemy('imp_' + el.key, x + wr(-3, 3), z + wr(-3, 3));
+      }
+    }
+  });
   echo = createEnemy('echo', nwSite.echo.x, nwSite.echo.z, { facing: 0, role: 'echo' });
   // Gate guards of every village. They only fight you if their village is your rival.
   for (const el of ELEMENTS) for (const g of nwSite.gates[el.index]) {
@@ -3297,13 +3314,15 @@ function openMissionDesk() {
     <div class="btns"><button class="secondary" data-act="squadFollow">${L.squadFollow ? 'Squad: wait in the village' : 'Squad: travel with me'}</button><button class="secondary" data-act="close">Bow (E)</button></div>`, 'dialog');
 }
 // A spot out in the wilds, far from any village.
+// A spot out in the wilds within a few hundred meters of home, away from any village.
 function wildSpot(minD, maxD) {
+  const home = ELEMENTS[P.life.village].town;
   for (let k = 0; k < 200; k++) {
     const a = Math.random() * Math.PI * 2, r = rand(minD, maxD);
-    const x = NW.x + Math.cos(a) * r, z = NW.z + Math.sin(a) * r;
-    if (townDist(x, z) > 40 && height(x, z) > -0.3) return { x, z };
+    const x = home.x + Math.cos(a) * r, z = home.z + Math.sin(a) * r;
+    if (townDist(x, z) > 40 && height(x, z) > -0.3 && Math.hypot(x - NW.x, z - NW.z) < NW.r - 80) return { x, z };
   }
-  return { x: NW.x + 200, z: NW.z };
+  return { x: home.x + (NW.x - home.x) * 0.2, z: home.z + (NW.z - home.z) * 0.2 };
 }
 const missionFoes = [];
 let catMesh = null, merchant = null;
@@ -3318,7 +3337,7 @@ function startSquadMission(rank) {
   } else if (m.type === 'escort') {
     m.dest = ELEMENTS[(L.village + (Math.random() < 0.5 ? 1 : 4)) % 5].town.index;
   } else if (m.type === 'rogue' || m.type === 'warlord') {
-    m.spot = wildSpot(250, NW.r - 80);
+    m.spot = wildSpot(220, 520);
   }
   L.smission = m;
   closeModal();

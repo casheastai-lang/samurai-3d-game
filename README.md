@@ -63,7 +63,13 @@ Every shop also sells armor, charms, potions and six outfits: Wandering Ronin, C
 ### After the Demon King: a new life
 
 Beating Shuten-doji isn't the end. With his last breath he curses you, and you wake as a **six-year-old child** on an island in another world.
-Five villages live there, very far apart, around a great sacred tree at the Crossroads. Each one is guarded by six ninjas and watchtowers. Pick the one that raises you; its gift lasts your whole life:
+Five villages live there around a great sacred tree at the Crossroads, each guarded by six ninjas and watchtowers. They are very far apart:
+- each village is 1.6 km from the tree;
+- neighboring villages are about 1.9 km apart;
+- villages across the island are about 3 km apart.
+
+The long roads between them are roamed by imp gangs and wild oni, so travel by shrine once you have found a village.
+Pick the village that raises you; its gift lasts your whole life:
 
 | Village | Element | Gift | Heirloom blade at 16 |
 | --- | --- | --- | --- |
