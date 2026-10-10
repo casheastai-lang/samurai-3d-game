@@ -2034,6 +2034,8 @@ modalBox.addEventListener('click', e => {
   switch (act) {
     case 'close': closeModal(); break;
     case 'new': startGame(null); openCreator(true); break;
+    // Start fresh as if the Demon King had already fallen: straight to his curse and the five villages.
+    case 'skipNewLife': startGame({ bossDead: true }); showCurse(); break;
     case 'continue': startGame(loadSave()); break;
     case 'buy': buy(arg); break;
     case 'tab': shopTab = arg; openShop(shopTown, shopDef); break;
@@ -2097,11 +2099,13 @@ function showTitle() {
     to Kurogane Fort. Raid the <b>ninja bases</b> beside the road and defeat their masters to open
     <b>portals to demon fortresses</b>, where warlords guard legendary swords. Buy new blades and
     outfits in every town, then slay <b>Shuten-doji, the Demon King</b>.</p>
-    ${CONTROLS_HTML}
     <div class="btns">
       ${s ? `<button data-act="continue">Continue (${s.life ? 'Age ' + s.life.age : 'Lv ' + s.lvl}, ${TOWNS[s.lastTown]?.name ?? ''})</button>` : ''}
       <button data-act="new" class="${s ? 'secondary' : ''}">New Journey</button>
-    </div>`, 'title');
+      <button data-act="skipNewLife" class="secondary">Skip to the new life</button>
+    </div>
+    <p class="sub center">Skip to the new life: start straight after the Demon King's curse, in the five villages.</p>
+    ${CONTROLS_HTML}`, 'title');
 }
 function showHelp() {
   openModal(`<h2>How to play</h2>${CONTROLS_HTML}
@@ -2483,6 +2487,8 @@ function victory() {
 // With his last breath the Demon King curses the hero: they are torn out of this world
 // and reborn as a child on an island of five villages.
 function showCurse() {
+  // Only once: not over the village choice, and never after a new life has begun.
+  if (P.life || ui === 'curse' || ui === 'village') return;
   screenFlash(1);
   shake(1);
   openModal(`<div class="kanji">呪</div><h2 class="center">The Demon King's Curse</h2>
